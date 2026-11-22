@@ -1,0 +1,17 @@
+# Secrets - jangan pernah di-commit
+.env
+secrets/
+*.key
+*.pem
+id_rsa*
+id_ed25519*
+# Runtime / data
+node_modules/
+paper/
+*.sqlite
+*.sqlite3
+*.log
+*.bak
+*.bak-*
+# OS
+.DS_Store

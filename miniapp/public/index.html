@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <title>Warlock 2.0 — Dry Run / Live</title>
+  <link rel="stylesheet" href="/app.css?v=20261121-profit">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body class="dash-wide">
+  <header class="top">
+    <div>
+      <h1>Warlock 2.0</h1>
+      <p class="badge">SOLANA LP TERMINAL <span class="mode">DRY RUN</span></p>
+    </div>
+    <div class="lang-switch" role="group" aria-label="Language"><button type="button" data-lang="en" aria-pressed="false">EN</button><button type="button" data-lang="id" aria-pressed="true" class="on">ID</button></div>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button type="button" data-tab="dashboard" class="tab active" role="tab" aria-selected="true">Dashboard</button>
+    <button type="button" data-tab="status" class="tab" role="tab">Status</button>
+    <button type="button" data-tab="settings" class="tab" role="tab">Settings</button>
+    <button type="button" data-tab="wallet" class="tab" role="tab">Wallet</button>
+  </nav>
+  <main>
+    <p id="banner" class="banner hidden"></p>
+
+    <section id="panel-dashboard" class="panel dash" aria-label="Dashboard">
+      <div class="card dash-hero">
+        <div class="dash-hero-top">
+          <div class="dash-brand"><img src="/logo.svg?v=1" alt="Warlock" class="dash-brand-avatar" width="44" height="44"><div><strong>Warlock 2.0</strong><small id="dash-sub">Meteora DLMM · memuat…</small></div></div>
+          <div class="dash-pills"><button type="button" id="dash-mode" class="dash-pill dry on" data-go="wallet:live">DRY RUN</button><button type="button" id="dash-live" class="dash-pill live" data-go="wallet:live">LIVE</button><button type="button" id="dash-parity" class="dash-pill warn" data-go="wallet:live">PARITY …</button></div>
+          <div class="dash-quick"><button type="button" data-go="status:open">Status</button><button type="button" data-go="settings">Settings</button><button type="button" data-go="wallet:key">Wallet</button></div>
+          
+        </div>
+        <div id="dash-kpis" class="dash-kpis"></div>
+      </div>
+      <div class="dash-grid">
+        <aside class="card dash-modules-card"><div class="dash-head"><span>WORKFLOW MODULES</span><b id="dash-online" class="positive">6 ONLINE</b></div><div id="dash-modules" class="dash-modules"></div></aside>
+        <div class="dash-main">
+          <div class="card dash-route">
+            <div class="dash-head"><span>LIVE WORKFLOW ROUTE · SCAN → SCREEN → ENTRY → RESHAPE → EXIT</span><b id="dash-route-badge" class="purple">WARLOCK 2.0 PIPELINE</b></div>
+            <div id="dash-route-pills" class="dash-hls"></div>
+            <div id="dash-flow" class="dash-flow"></div>
+            <div id="dash-output" class="dash-output" role="button" tabindex="0" data-go="status:history"></div>
+            <div id="dash-tiles" class="dash-tiles"></div>
+          </div>
+          <div class="dash-row2">
+            <div class="card dash-strategy"><div id="dash-strategy-head" class="dash-head" role="button" tabindex="0" data-go="settings"></div><div id="dash-strategy-body"></div></div>
+            <div class="card dash-log" role="button" tabindex="0" data-go="status:activity"><div class="dash-head"><span>$ tail -f bot-closes.log</span><b class="purple">WIB</b></div><div id="dash-log-body" class="dash-term"></div></div>
+          </div>
+          <div class="dash-row2">
+            <div class="card dash-run" role="button" tabindex="0" data-go="status:history"><div id="dash-run-head" class="dash-head"></div><div id="dash-run-body"></div></div>
+            <div class="dash-side">
+              <div id="dash-cal" class="card dash-cal">Memuat PnL calendar…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p id="credit" class="credit">Warlock 2.0 · by <a href="https://x.com/SickNatureLimit" target="_blank" rel="noopener noreferrer">@SickNatureLimit</a> · <a href="https://x.com/SickNatureLimit" target="_blank" rel="noopener noreferrer">X</a> · <a href="https://t.me/SicknatureEcosystem" target="_blank" rel="noopener noreferrer">Telegram</a> · <span class="fee-note">Fee pembuat bot 0,5% per swap LIVE (Jupiter); dry run tanpa fee</span></p>
+    </section>
+
+    <section id="panel-status" class="panel hidden">
+      <div id="status-body" class="card summary">Memuat portofolio…</div>
+      <div class="btn-row position-subtabs" role="tablist" aria-label="Panel portofolio paper"><button type="button" class="btn active" data-position-view="open" role="tab" aria-selected="true">Posisi open</button><button type="button" class="btn" data-position-view="history" role="tab" aria-selected="false">History</button><button type="button" class="btn" data-position-view="screening" role="tab" aria-selected="false">Screening</button><button type="button" class="btn" data-position-view="activity" role="tab" aria-selected="false">Aktivitas</button></div>
+      <div id="open-view">
+      <div class="section-head"><h2>Posisi terbuka <span id="position-count" class="count">0</span></h2><span class="live-dot" id="sync-state">Menghubungkan</span></div>
+      <div id="positions"></div>
+      </div><div id="history-view" class="hidden">
+      <div class="section-head"><h2>History posisi · 24 jam</h2></div><p id="archive-note" class="meta"></p>
+      <label class="toggle"><input id="hide-dust" type="checkbox"> Sembunyiin PnL receh <span class="meta">|PnL| &lt; 0.1% (BE)<span id="hide-dust-n"></span></span></label>
+      <div id="closed"></div></div>
+      <div id="screening-view" class="hidden"><div class="section-head"><h2>Kandidat terdekat</h2><span class="meta">fee/TVL · 30m</span></div>
+      <div id="candidates" class="card"></div></div>
+      <div id="activity-view" class="hidden"><div class="section-head"><h2>Aktivitas bot</h2><span class="meta">WIB · 50 terbaru</span></div>
+      <div id="activity" class="card feed"></div></div>
+
+      <p id="window-info" class="meta footer-note"></p>
+    </section>
+
+    <section id="panel-settings" class="panel hidden">
+      <form id="settings-form" class="card"></form>
+      <div class="btn-row sticky">
+        <button type="button" id="btn-reset" class="btn ghost">Reset ke default</button>
+        <button type="submit" form="settings-form" id="btn-save" class="btn primary">Simpan</button>
+      </div>
+    </section>
+
+    <section id="panel-wallet" class="panel hidden">
+      <div class="btn-row position-subtabs" role="tablist" aria-label="Menu wallet"><button type="button" class="btn active" data-wallet-view="key" role="tab" aria-selected="true">Wallet</button><button type="button" class="btn" data-wallet-view="pnlcal" role="tab" aria-selected="false">PnL Calendar</button><button type="button" class="btn" data-wallet-view="live" role="tab" aria-selected="false">Live</button></div>
+      <div id="wallet-live-view" class="hidden">
+      <div class="card mode-card">
+        <div class="k">Mode</div>
+        <div class="mode-choose" role="group" aria-label="Mode">
+          <button type="button" id="mode-dry" class="mode-btn dry on" aria-pressed="true">DRY RUN</button>
+          <button type="button" id="mode-live" class="mode-btn live" aria-pressed="false">LIVE</button>
+        </div>
+        <p id="mode-note" class="meta">Pilih DRY RUN (simulasi) atau LIVE (uang asli).</p>
+      </div>
+      <div id="capital-card" class="card">
+        <div class="k">Modal (dry run &amp; live)</div>
+        <div class="seg" role="group" aria-label="Aset modal">
+          <button type="button" id="btn-cap-USDC" class="seg-btn" data-capital="USDC" aria-pressed="false">USDC</button>
+          <button type="button" id="btn-cap-SOL" class="seg-btn" data-capital="SOL" aria-pressed="false">SOL</button>
+        </div>
+        <p id="capital-note" class="meta">Memuat setelan…</p>
+        <p class="meta">Satu pilihan untuk dry run dan live. Dry run juga bisa memakai modal SOL.</p>
+      </div>
+      <form id="funding-form" class="card hidden">
+        <h3>Tambah modal (dry run)</h3>
+        <p id="funding-stats" class="meta"></p>
+        <p class="meta">Virtual USDC saja, bukan transfer uang. Modal disetor tidak dihitung sebagai profit. Tidak mengubah posisi yang sedang terbuka.</p>
+        <div class="seg" data-unit-for="funding" role="group" aria-label="Satuan jumlah"><button type="button" class="seg-btn active" data-unit="USDC" aria-pressed="true">USDC</button><button type="button" class="seg-btn" data-unit="SOL" aria-pressed="false">SOL</button></div>
+        <label id="funding-label" for="funding-amount">Jumlah USDC (1–10000)</label>
+        <input id="funding-amount" type="number" min="1" max="10000" step="0.000001" required placeholder="100">
+        <p id="funding-eq" class="meta" aria-live="polite"></p>
+        <button id="btn-funding" type="submit" class="btn primary">Konfirmasi tambah modal</button>
+        <p id="funding-result" class="meta" aria-live="polite"></p>
+      </form>
+      <div id="continue-card" class="card hidden">
+        <h3>Dry run berhenti</h3>
+        <p id="continue-info" class="meta"></p>
+        <p class="meta">Lanjutkan run yang sama: riwayat, modal, dan posisi tetap. Sebelum jalan, data disimpan otomatis ke paper/runs/autosave. Bot dijalankan ulang dan jendela waktu yang habis diperpanjang.</p>
+        <button id="btn-continue" type="button" class="btn primary">Lanjutkan dry run</button>
+        <p id="continue-result" class="meta" aria-live="polite"></p>
+      </div>
+      <form id="modal-form" class="card hidden">
+        <h3>Edit modal dry run</h3>
+        <p id="modal-stats" class="meta"></p>
+        <p class="meta">Mulai dry run baru dari awal dengan modal ini. Dry run sekarang disimpan (tidak dihapus). Semua posisi harus sudah ditutup. SL blacklist dan settings tetap.</p>
+        <div class="seg" data-unit-for="modal" role="group" aria-label="Satuan modal"><button type="button" class="seg-btn active" data-unit="USDC" aria-pressed="true">USDC</button><button type="button" class="seg-btn" data-unit="SOL" aria-pressed="false">SOL</button></div>
+        <label id="modal-label" for="modal-amount">Modal baru USDC (minimal 1)</label>
+        <input id="modal-amount" type="number" min="0" step="0.000001" required value="0">
+        <p id="modal-eq" class="meta" aria-live="polite"></p>
+        <button id="btn-modal" type="submit" class="btn danger">Edit modal &amp; mulai ulang</button>
+        <p id="modal-result" class="meta" aria-live="polite"></p>
+      </form>
+      <div class="card" id="runs-list"></div>
+      <div class="card" id="live-status">Memuat…</div>
+      <div id="live-legacy" class="hidden">
+      <div class="card" id="live-arm-box">
+        <p class="meta">Live jalan kalau ada key dan saldo wallet cukup. Tekan <strong>Live ON</strong>, lalu konfirmasi. Kalau saldo kurang, live menolak jalan dan dry run tetap berjalan. Hanya pemilik.</p>
+        <div id="live-test-box" class="hidden">
+          <p class="meta"><strong>Tes live terawasi</strong>: gerbang verifikasi belum tertutup, jadi Live ON berjalan sebagai sesi tes yang dibatasi (uang asli). Nilai awal mengikuti setelanmu; ubah sesukamu, tanpa batas atas:</p>
+          <label for="test-max-pos">Maks posisi sekaligus</label>
+          <input id="test-max-pos" type="number" min="1" step="1">
+          <label for="test-max-sol">Maks SOL per posisi (termasuk buffer gas)</label>
+          <input id="test-max-sol" type="number" min="0.01" step="0.01">
+          <label for="test-hours">Lama sesi (jam; 0 = tanpa batas waktu)</label>
+          <input id="test-hours" type="number" min="0" step="0.5">
+          <p class="meta">Kalau waktu habis: bot menutup semua posisi dan berhenti sendiri. Setelah tes, catat hasilnya dengan record-live-verification.js. Kalau semua gerbang sudah tertutup, Live ON jalan tanpa batas sesi.</p>
+        </div>
+        <button type="button" id="btn-arm" class="btn danger">Live ON</button>
+        <div id="live-confirm" class="hidden">
+          <label for="live-phrase">Ketik LIVE untuk konfirmasi</label>
+          <input id="live-phrase" type="text" autocomplete="off" maxlength="8" placeholder="LIVE">
+          <p id="live-timer" class="meta"></p>
+          <button type="button" id="btn-go-live" class="btn danger">2. Go Live</button>
+        </div>
+      </div>
+      <div class="card">
+        <p class="meta">Live OFF: tutup semua posisi lalu matikan live, atau hanya stop buka posisi baru (posisi yang kebuka dibiarkan sampai TP/emergency/12h).</p>
+        <div class="btn-row">
+          <button type="button" id="btn-stop-close" class="btn danger">Live OFF (tutup posisi)</button>
+          <button type="button" id="btn-stop-nonew" class="btn ghost">Stop buka posisi baru</button>
+        </div>
+      </div>
+      </div>
+      </div>
+      <div id="wallet-pnlcal-view" class="hidden"><div id="pnlcal" class="card">Memuat PnL calendar…</div></div>
+      <div id="wallet-key-view">
+      <div class="card">
+        <div class="k">Alamat (public saja)</div>
+        <p id="wallet-address" class="mono">Belum ada key</p>
+        <p id="wallet-updated" class="meta"></p>
+      </div>
+      <div id="rent-card" class="card">
+        <div class="k">Claim Token Account</div>
+        <p class="meta">Menutup token account yang kosong (saldo 0) dan mengembalikan rent SOL-nya ke wallet ini sendiri (~0,002 SOL per akun). Bisa kapan saja, juga saat Live ON. USDC, wSOL, dan token dari posisi yang masih terbuka tidak disentuh.</p>
+        <p id="rent-result" class="meta">Belum dicek.</p>
+        <div class="btn-row">
+          <button type="button" id="btn-rent-scan" class="btn">Cek Token Account</button>
+          <button type="button" id="btn-rent-claim" class="btn primary hidden">Claim Token Account</button>
+        </div>
+      </div>
+      <form id="wallet-form" class="card">
+        <label for="wallet-secret">Private key (disembunyikan, write-only)</label>
+        <p class="meta">Tempel base58 atau JSON array. Tidak pernah ditampilkan lagi, tidak dikirim ke Telegram, tidak masuk log.</p>
+        <input id="wallet-secret" name="secret" type="password" autocomplete="new-password" spellcheck="false" placeholder="Tempel key di sini">
+        <div class="btn-row">
+          <button type="submit" id="btn-save-key" class="btn primary">Simpan / Ganti key</button>
+          <button type="button" id="btn-del-key" class="btn danger">Hapus key</button>
+        </div>
+      </form>
+      <form id="rpc-form" class="card" autocomplete="off">
+        <div class="k">RPC (Helius / lainnya)</div>
+        <p class="meta">URL https lengkap. Setelah disimpan hanya 5 karakter terakhir yang tampil; tidak dikirim ke Telegram, tidak masuk log.</p>
+        <div class="rpc-slot"><label for="rpc-url-1">RPC 1 <span id="rpc-mask-1" class="meta mono"></span></label><input id="rpc-url-1" type="password" autocomplete="new-password" spellcheck="false" placeholder="https://mainnet.helius-rpc.com/?api-key=…"><div class="btn-row"><button type="button" class="btn primary" data-rpc-save="1">Simpan RPC 1</button><button type="button" class="btn danger" data-rpc-clear="1">Hapus</button></div></div>
+        <div class="rpc-slot"><label for="rpc-url-2">RPC 2 <span id="rpc-mask-2" class="meta mono"></span></label><input id="rpc-url-2" type="password" autocomplete="new-password" spellcheck="false" placeholder="https://… (cadangan)"><div class="btn-row"><button type="button" class="btn primary" data-rpc-save="2">Simpan RPC 2</button><button type="button" class="btn danger" data-rpc-clear="2">Hapus</button></div></div>
+        <div class="rpc-slot"><label for="rpc-url-3">RPC 3 <span id="rpc-mask-3" class="meta mono"></span></label><input id="rpc-url-3" type="password" autocomplete="new-password" spellcheck="false" placeholder="https://… (cadangan)"><div class="btn-row"><button type="button" class="btn primary" data-rpc-save="3">Simpan RPC 3</button><button type="button" class="btn danger" data-rpc-clear="3">Hapus</button></div></div>
+        <p class="meta" id="rpc-note">Isi 1 RPC aja nggak masalah. RPC 2 dan 3 hanya untuk cadangan.</p>
+      </form>
+      </div>
+    </section>
+
+  </main>
+  <dialog id="trade-modal"><div class="section-head"><h2>Detail posisi</h2><button id="close-modal" class="btn ghost">Tutup ✕</button></div><div id="trade-detail"></div></dialog>
+  <dialog id="cal-day-modal"><div class="section-head"><h2 id="cal-day-title">Rincian hari</h2><button id="cal-day-close" type="button" class="btn ghost">Tutup ✕</button></div><p class="meta cal-day-sub">Reset 07:00 WIB</p><div id="cal-day-body"></div></dialog>
+  <!-- v=20261112-tvldrop -->
+  <script src="/i18n.js?v=20261121-profit"></script>
+  <script src="/dashboard.js?v=20261121-profit"></script>
+  <script src="/app.js?v=20261122-close"></script>
+</body>
+</html>

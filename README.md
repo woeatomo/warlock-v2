@@ -1,0 +1,172 @@
+# Warlock 2.0
+
+Credit: dibuat oleh [@SickNatureLimit](https://x.com/SickNatureLimit) · [X](https://x.com/SickNatureLimit) · [Telegram Sicknature Ecosystem](https://t.me/SicknatureEcosystem)
+
+
+Paper trading is what is running (or ready to run) now. Live trading is locked until operator funds the wallet and explicitly approves.
+
+
+## Instalasi (VPS Linux, mis. Ubuntu 22.04/24.04)
+Butuh: **Node.js >= 20**, **pm2**, **cloudflared** (untuk Mini App Telegram), dan bot Telegram dari @BotFather.
+
+**1. Pasang alat dasar** (sekali saja):
+```bash
+# Node.js 20 (lewat NodeSource) + pm2
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+sudo npm i -g pm2
+# cloudflared (tunnel HTTPS gratis untuk Mini App)
+curl -fsSL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i /tmp/cloudflared.deb
+```
+
+**2. Pasang Warlock:**
+```bash
+unzip warlock-v2.zip && cd warlock-v2
+./install.sh
+```
+`install.sh` memeriksa Node, memasang dependensi (bot + kartu PnL), membuat `.env` dan `secrets/telegram.env` (izin 600),
+membuat file `STOP` (live terkunci, mulai di DRY RUN), lalu menjalankan tes.
+
+**3. Isi konfigurasi:**
+```bash
+nano secrets/telegram.env   # TELEGRAM_BOT_TOKEN=token dari @BotFather
+nano .env                   # minimal: HELIUS_API_KEY (atau SOLANA_RPC_URL), TELEGRAM_CHAT_ID, TELEGRAM_ALLOWED_ID
+```
+ID Telegram Anda (angka) bisa dilihat lewat bot @userinfobot. Isi angka yang sama di `TELEGRAM_CHAT_ID` dan `TELEGRAM_ALLOWED_ID`:
+Mini App hanya bisa dibuka oleh ID ini.
+
+**4. Jalankan (dry run + Mini App + tunnel), dan nyalakan otomatis saat VPS reboot:**
+```bash
+pm2 start ecosystem.sol.config.js
+pm2 save && pm2 startup     # jalankan perintah sudo yang dicetak pm2 startup
+```
+Setelah tunnel jalan, tombol **Warlock** muncul di kiri bawah chat bot Telegram Anda. Kirim `/start` ke bot untuk menu.
+
+**5. LIVE (opsional, uang asli):**
+```bash
+node set-wallet-key.js      # kunci wallet KHUSUS bot, diketik tersembunyi, disimpan terenkripsi di secrets/
+```
+Cara lain yang juga fungsi: tempel private key di Mini App → Wallet (disimpan terenkripsi di `secrets/` yang sama). Syaratnya sesi Telegram harus fresh (kurang dari 5 menit): tutup Mini App, buka ulang dari Telegram, lalu langsung tempel key. SSH tetap paling aman karena key tidak lewat jaringan.
+Lalu buka Mini App → Wallet → Live → tombol **LIVE**. Tombol DRY RUN mengembalikan ke paper (menulis file `STOP`).
+
+Catatan:
+- Semua isi `.env` dijelaskan di `.env.example`. `.env`, `secrets/`, data `paper/`, state, dan log tidak pernah ikut di zip ini.
+- cloudflared dicari otomatis di `/usr/local/bin`, `/usr/bin`, atau `~/.local/bin`; kalau di tempat lain, jalankan pm2 dengan `CLOUDFLARED=/path/cloudflared`.
+- Debu token (sisa LP yang gagal di-swap saat close): `node clean-dust.js` untuk melihat (dry run), `CLEAN_DUST_LIVE=1 node clean-dust.js` untuk menjual ke SOL. Hanya token bekas trade Warlock yang dijual; token lain di wallet dan posisi yang masih terbuka tidak disentuh.
+- Tes: `sh run-all-tests.sh` (jalan di salinan terisolasi di /tmp, tidak menyentuh data asli).
+
+## Current locks
+
+- `/workspace/lp-bot/STOP` is the **live** lock. It was **left in place**. Do not remove it for paper.
+- Paper stop file: `/workspace/lp-bot/paper/STOP`
+- The process will refuse live mode unless `DRY_RUN=0` **and** `LIVE_CONFIRMED=1`. `send()` also refuses without that pair of flags.
+
+## Paper run (7 days, 500 USDC capital)
+
+Started by pm2 (`ecosystem.paper.config.js`, app name `lp-paper`) via `paper-exec.sh`. Forces `PAPER=1 DRY_RUN=1`. Never loads the private key, never signs, never sends. `run-paper.sh` is a bash fallback and must not run at the same time.
+
+Virtual wallet starts at **500 USDC only**. There is no separate SOL gas balance. At each open the bot Jupiter-quotes (quote only) USDC→SOL for the position size plus `GAS_BUFFER_SOL` (default **0.30 SOL**) to cover position+ATA rent, possible bin-array rent, and open/reshape/close/swap tx fees, with margin. A tiny `USDC_BUFFER` (default $0.10) stays unsold. On close, refundable rent and leftover buffer are included and **all remaining SOL is swapped back to USDC**. Real wallet is unused.
+
+- Position: ~all available USDC after the gas extra and residual, 50% Spot + 50% Bid-Ask, one-sided left of active down to about −50%, one position at a time, AR off. Still capped at 5% of pool TVL (the cap applies to position size, not the gas extra).
+- Filters (C2 plus anti-rug, all must pass): **30m** fee/TVL (Meteora datapi `fees[30m]/tvl*100`) ≥ **1%** (`FT_WINDOW`, `MIN_FT`), 1h pump ≤ 15%, 24h pump ≤ +50%, pool age ≥ **24h**, liquidity ≥ **$10k**, bin step 100–400, 1h volume not a spike from ~zero (1h ≤ 50% of 24h volume), RugCheck contract safety (mint + freeze authority revoked, no `danger` risks, normalised score < 50; API failure is a reject), top-10 holders (excluding LP/pool/program accounts) ≤ 30% of supply, creator/dev hold ≤ 10%. Position still capped at 5% of pool TVL (logs requested vs actual). Thresholds are env-configurable.
+- Single live-like strategy: **N5** — reshape when the active bin has moved down 5 bins since last reshape or entry, compound SOL fees on reshape. Same-position M-shape (token-only Bid-Ask on the right, left quote never withdrawn). Baseline and N10 remain in `bot.js` commented, not deleted.
+- Exits: TP +20%, **emergency stop if price drops more than 30% from entry**, or max hold 12h. `paper/STOP` or the 7-day window end closes whatever is still open. Emergency closes are stored with reason `emergency_stop`.
+- Telegram (operator, [DRY RUN], casual Indonesian): open, reshape, close, emergency stop, error/restart, daily ~21:00 WIB, window end. Chat id in `paper/telegram.json`; token is not stored in the repo.
+- Journals: `paper/history.csv` (pair, pool address, open/close WIB, close reason, `usdc_in`/`usdc_out`, `pnl_usd`/`pnl_pct`, SOL equivalent, `swap_cost_usd`, `gas_used_sol`, fees, reshape count, plus size/bin fields), `paper/positions_open.json` (single position or null), `paper/summary.json` (single-strategy stats, USDC-primary).
+
+### Mini app (Status, Settings, Wallet, Live)
+
+Telegram mini app on `127.0.0.1:8787` (pm2 app `lp-miniapp`), published through a Cloudflare quick tunnel (pm2 app `lp-tunnel`, `cloudflared` in `~/.local/bin`). The current HTTPS URL is written to `paper/tunnel-url.json` and, whenever it changes, pushed to the operator's chat menu button (`setChatMenuButton` web_app, chat `1000000001`) and to `/start` (`setMyCommands`). `/start` replies with a web_app button only to operator. Static pages are public; `/api/*` still requires valid operator `initData` (403 without it).
+
+Tabs: Status (read-only; when a position is open, a per-position **BIN SHAPE** chart of SOL vs token per bin, with the active bin, range edges, and an M badge after reshape), Settings (paper filters / reshape N / TP / emergency / hold / gas buffer / pump caps, pause/resume dry run via `paper/STOP`), Wallet (paste key write-only into an encrypted store; only the public address is shown), Live (balances, two-step Go Live by typing LIVE within 60s, Stop Live). Writes need the operator's Telegram `initData` (live/key writes must be <5 minutes fresh) plus a CSRF nonce, with rate limits and lockout. Settings land in `paper/settings.json`. The key is never logged or put in pm2 env. This bot does not go live by itself — only the operator's confirm in the app removes `/workspace/lp-bot/STOP` and starts `lp-live`.
+
+Open/reshape Telegram notices send a PNG of the bin shape (`sendPhoto`) with the same caption plus Meteora / LP Agent URL buttons, and fall back to text if the photo cannot be sent.
+
+### Check status
+
+
+```bash
+cat /workspace/lp-bot/paper/summary.json
+tail -n 80 /workspace/lp-bot/paper/bot.log
+cat /workspace/lp-bot/paper/positions_open.json
+# optional:
+column -s, -t /workspace/lp-bot/paper/history.csv | sed -n '1,20p'
+```
+
+### Stop paper (does not start live, does not touch the live STOP file)
+
+```bash
+touch /workspace/lp-bot/paper/STOP
+# and/or
+pm2 stop lp-paper
+```
+
+`paper/STOP` makes the bot close any open **virtual** position and exit; the wrapper then stops the pm2 app so it does not autorestart. `pm2 stop lp-paper` stops the process immediately (use `paper/STOP` first if a position is open and you want a clean close).
+
+### Journal files
+
+- `/workspace/lp-bot/paper/positions_open.json`
+- `/workspace/lp-bot/paper/history.csv`
+- `/workspace/lp-bot/paper/summary.json`
+- `/workspace/lp-bot/paper/reshapes.jsonl`
+- `/workspace/lp-bot/paper/state.json` (virtual book; live `state.json` is not overwritten)
+- `/workspace/lp-bot/paper/ESTIMATES.md` — what is real vs estimated
+
+## Swap fee (referral) / Biaya swap
+
+This bot is free. Swaps it makes on-chain through Jupiter (live mode) include a **0.5% (50 bps) platform fee** that goes to the developer's Jupiter referral account; it applies only when that referral token account exists for the swapped token. Dry run does not swap on-chain, so no fee applies there.
+
+Bot ini gratis. Swap on-chain lewat Jupiter (mode live) memuat **fee platform 0,5%** untuk akun referral Jupiter developer, sebagai imbalan; fee hanya berlaku bila akun token referral itu ada untuk token yang di-swap. Dry run tidak swap on-chain, jadi tidak ada fee.
+
+## Go live (requires funding + the operator's explicit approval)
+
+> **TL;DR — Go Live (uang asli), 4 langkah:**
+> 1. **Simpan private key** (jangan taruh di `.env`): lewat SSH pakai `node set-wallet-key.js` (paling aman, key tidak lewat jaringan), ATAU tempel di Mini App → Wallet (fungsi, tersimpan terenkripsi di `secrets/` yang sama; syaratnya sesi Telegram harus fresh kurang dari 5 menit, jadi tutup Mini App, buka ulang dari Telegram, lalu langsung tempel). `live-exec.sh` sengaja menghapus `PRIVATE_KEY` dari environment, jadi isi `.env` tidak dipakai buat live.
+> 2. **Pastikan wallet bot ada SOL-nya** (alamat publiknya tampil di Mini App → Wallet). Lihat tabel funding di bawah buat jumlahnya.
+> 3. **Pencet Go Live di Mini App** → Wallet → Live → tombol **LIVE**. Ini menghapus file `STOP` (kunci live).
+> 4. **Pastikan proses live jalan di PM2**: `pm2 start ecosystem.live.config.js` (ini yang ngeset `DRY_RUN=0` dan `LIVE_CONFIRMED=1`). Bot nolak jalan live kalau `STOP` masih ada, `LIVE_CONFIRMED` bukan `1`, atau `DRY_RUN` masih `1`.
+>
+> Jangan jalankan langkah-langkah ini sebelum operator bilang ya dan wallet bot sudah didanai.
+
+Do **not** run these until operator says yes and the bot wallet (its public address is shown in the mini app, Wallet menu) is funded.
+
+Funding needed (SOL price moves; add a little buffer):
+
+| Target | Position | Reserve | Rent/fees (typical) | **Suggested fund** |
+|---|---|---|---|---|
+| Classic 2 SOL | 2.00 | 0.15 | ~0.06 refundable position+ATA, plus 0–N × 0.0714 non-refundable bin arrays | **~2.40 SOL** |
+| Paper-sized 5 SOL | 5.00 | 0.15 | same rent shape | **~5.40 SOL** |
+| $500 at entry | $500 / SOL-USD (e.g. ~5.83 SOL at $85.8) | 0.15 | same | **~6.20 SOL** |
+
+Exact rent is quoted at entry (`quoteCreatePosition`). Bin-array rent is not returned when the position closes.
+
+```bash
+# 2 SOL, classic C2, reshape off (historical default)
+cd /workspace/lp-bot && \
+  DRY_RUN=0 LIVE_CONFIRMED=1 POSITION_SOL=2 RESERVE_SOL=0.15 RESHAPE=0 \
+  nohup ./run.sh >/dev/null 2>&1 &
+
+# $500 per open (converted at entry), 5% TVL cap, $10k min liquidity
+cd /workspace/lp-bot && \
+  DRY_RUN=0 LIVE_CONFIRMED=1 POSITION_USD=500 RESERVE_SOL=0.15 \
+  MIN_LIQ_USD=10000 MAX_POS_TVL_FRAC=0.05 \
+  nohup ./run.sh >/dev/null 2>&1 &
+```
+
+`./run.sh` will still refuse if `STOP` is present. Removing `STOP` is part of an approved go-live only.
+
+To enable the same-position M-reshape live, add `RESHAPE=1`.
+
+## RPC failover (3 slot) / RPC cadangan
+
+Fill RPC 1 / 2 / 3 in the mini app (Wallet, under the private key) or put them in `.env`. Mini-app slots are stored only on the server in `<LP_SECRETS_DIR>/rpc.env` (mode 600, atomic write + `.bak`), shown as the last 5 characters only, and win over `.env`; the bot and mini app re-read that file every 10 s (no restart needed). Empty slots are skipped; 1, 2 or 3 slots all work.
+
+```
+RPC_URL_1=https://mainnet.helius-rpc.com/?api-key=KEY_1   # optional: without it, slot 1 = the old SOLANA_RPC_URL / HELIUS_API_KEY
+RPC_URL_2=https://mainnet.helius-rpc.com/?api-key=KEY_2
+RPC_URL_3=https://mainnet.helius-rpc.com/?api-key=KEY_3
+# shorthand for Helius: HELIUS_API_KEY_2=KEY_2 / HELIUS_API_KEY_3=KEY_3
+```
+
+Every RPC call goes to slot 1; on 429 (limit), 5xx, a network error or a timeout it is resent to the next slot and that slot rests 60 s (429) / 30 s (other errors), then slot 1 is used again. A signed transaction re-sent to another slot is the same signed bytes (same signature), so it can land only once. The mini app (Wallet > Live > RPC) shows only the host and state of each slot (aktif / siaga / limit / kosong), never the key. Restart `sol-lp-live` and `sol-miniapp` after editing `.env`.

@@ -1,0 +1,2 @@
+Sora (Sora Project Authors), Inter (Rasmus Andersson / Inter Project Authors) and IBM Plex Mono (IBM) are licensed under the
+SIL Open Font License 1.1 (https://openfontlicense.org). Static instances generated from the Google Fonts variable fonts with fontTools.
