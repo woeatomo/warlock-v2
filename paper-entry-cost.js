@@ -20,7 +20,9 @@ async function estimate(dlmm,strategy,{txFeeSol=.000025,openTransactions=3,token
 }
 function rejection(cost,max=.05){
  if(!Number.isFinite(max)||max<0)throw Error('MAX_NONREFUND_SOL must be finite and >= 0');
- if(cost?.skipCheck)return null;
+ // PATCH (woeatomo fork): wide-range positions no longer bypass MAX_NONREFUND_SOL. At screening they carry no numbers yet (deferred);
+ // at open they carry the fast upper-bound estimate, which is checked like any other.
+ if(cost?.skipCheck&&!Number.isFinite(cost?.nonrefTotalSol))return null;
  if(!cost?.known||!Number.isFinite(cost.nonrefTotalSol))return 'Biaya non-refundable belum dapat dihitung (RPC/SDK); coba lagi';
  if(max===0||cost.nonrefTotalSol<=max+1e-12)return null;
  return `Non-refundable ${cost.nonrefTotalSol.toFixed(6)} SOL (${cost.newBinArrays} bin array baru; rent ${cost.nonrefRentSol.toFixed(6)} + tx ${cost.openTxFeeSol.toFixed(6)}) > maks ${max.toFixed(6)} SOL`;

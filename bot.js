@@ -1870,7 +1870,7 @@ async function paperCycle(state) {
     try{
      const result=await paperOpenAll(p,state);
      state.lastScan.openResults.push({pool:p.name,address:p.address,at:now(),...result});
-     if(result.skipped){log('OPEN TERTUNDA '+p.name+': '+result.skipped+(p.entryCostEstimate?.skipCheck?'; nonref BYPASS, bukan penghalang':''));if(/Jupiter|quote|cooldown|429/i.test(result.skipped))state.nextEntryRetryAt=Math.max(Date.now()+30000,paperQuoteClient.status().blockedUntil||0);}
+     if(result.skipped){log('OPEN TERTUNDA '+p.name+': '+result.skipped+(p.entryCostEstimate?.skipCheck?'; estimasi cepat nonref':''));if(/Jupiter|quote|cooldown|429/i.test(result.skipped))state.nextEntryRetryAt=Math.max(Date.now()+30000,paperQuoteClient.status().blockedUntil||0);}
      if(result.opened)saveState(state,F('state.json'));
     }catch(e){log('open error: '+e.message);state.lastScan.openResults.push({pool:p.name,address:p.address,at:now(),error:e.message});if(/Jupiter|quote|cooldown|429/i.test(e.message))state.nextEntryRetryAt=Math.max(Date.now()+30000,paperQuoteClient.status().blockedUntil||0);}
    }

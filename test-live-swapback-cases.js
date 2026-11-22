@@ -51,13 +51,13 @@ let n = 0; const t = async (name, fn) => { await fn(); n++; console.log('ok', na
     const sr = { solOut: 0.9, pnlCapital: -0.1, realizedSol: -0.1, initialCapitalInSol: 1, pendingTokenEstimateSol: 0.2, pnlUsd: -7, netPnlUsd: -7, usdcOut: 65, legUsdcOut: 65 };
     liveSafety.adjustRowForSale(sr, 0.25, 72); assert.ok(Math.abs(sr.pnlCapital + 0.05) < 1e-9 && Math.abs(sr.pnlUsd + 3.4) < 1e-9);
   });
-  await t('route (referral) fee kept: quote asks platformFeeBps + V2 when the fee account exists, the swap body sends feeAccount; amounts as strings', async () => {
+  await t('PATCH: route (referral) fee removed: even when the fee account exists, the quote has no platformFeeBps and the swap body has no feeAccount; amounts as strings', async () => {
     const { PublicKey } = require('@solana/web3.js'); const { TOKEN_PROGRAM_ID } = require('@solana/spl-token');
     const rows = swapRoute.feeCandidates('TokenMintAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'.slice(0, 0) || 'So11111111111111111111111111111111111111112', USDC);
     const data = Buffer.alloc(165); new PublicKey(USDC).toBuffer().copy(data, 0); data[108] = 1;
     const connection = { getMultipleAccountsInfo: async (keys) => keys.map((k, i) => (i === 0 ? { owner: TOKEN_PROGRAM_ID, data } : null)) };
     let qurl = ''; const q = await swapRoute.swapQuote({ connection, getJSON: async (u) => { qurl = u; return { inAmount: '1', outAmount: '2' }; }, inputMint: SOL, outputMint: USDC, amount: 1000n });
-    assert.ok(/platformFeeBps=50/.test(qurl) && /instructionVersion=V2/.test(qurl)); assert.equal(swapRoute.swapBodyParams(q).feeAccount, rows[0].address.toBase58());
+    assert.ok(!/platformFeeBps/.test(qurl) && rows.length > 0); assert.equal(swapRoute.swapBodyParams(q).feeAccount, undefined); assert.equal(swapRoute.ROUTE_FEE_BPS, 0); assert.ok(!('referralAccount' in swapRoute.ultraOrderParams({ a: 1 })));
     const sw = src.slice(src.indexOf('async function jupiterSwapLive'), src.indexOf('async function finishGhostClose'));
     assert.ok(/\.\.\.swapRoute\.swapBodyParams\(q\)/.test(sw) && /inAmount: String\(q\.inAmount\), outAmount: String\(q\.outAmount\)/.test(sw));
   });

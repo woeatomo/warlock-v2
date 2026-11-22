@@ -59,10 +59,11 @@ const SOL = cap.SOL, USDC = cap.USDC;
   assert.ok(!lc.evaluateBalances({ sol: 50, usdc: 0, capitalAsset: 'SOL', positionUsd: 500, solUsd: 0 }).ok);   // no SOL price: fail closed
   assert.ok(!lc.evaluateBalances({ sol: 1, usdc: 5 }).ok);                                                      // USDC capital unchanged
   assert.ok(lc.evaluateBalances({ sol: 1, usdc: 50 }).ok);
-  // dry run quote carries the live route fee (one constant)
+  // dry run quote carries the live route fee (one constant). PATCH: the fork's constant is 0, so dry run is fee-free; the 50 bps model is still tested explicitly.
+  assert.strictEqual(require('./swap-route-config').ROUTE_FEE_BPS, 0);
   const rf = require('./paper-route-fee'), sr = require('./swap-route-config');
   const q = { ok: true, inUi: 100, outUi: 1, outAmount: '1000000000', otherAmountThreshold: '990000000' };
-  const a = rf.applyToQuote(q, USDC, SOL, sr.ROUTE_FEE_BPS);
+  const a = rf.applyToQuote(q, USDC, SOL, 50); assert.strictEqual(rf.applyToQuote(q, USDC, SOL, sr.ROUTE_FEE_BPS), q);
   assert.ok(Math.abs(a.outUi - 0.995) < 1e-12); assert.strictEqual(a.outAmount, '995000000'); assert.strictEqual(a.otherAmountThreshold, '985050000'); assert.strictEqual(q.outUi, 1);   // input untouched (cache-safe)
   assert.strictEqual(rf.applyToQuote(q, 'AAA', 'BBB', 50).outUi, 1);                      // no SOL/USDC side: no fee account
   assert.strictEqual(rf.applyToQuote({ ok: false }, USDC, SOL, 50).ok, false);
