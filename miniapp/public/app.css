@@ -594,3 +594,19 @@ dialog{background:var(--card)!important;border-color:#493363!important}
 /* Custom background (woeatomo fork): put bg.jpg/png/webp in miniapp/public. Without a file only --bg shows. --bg-dim darkens the image for readability. */
 :root{--bg-dim:.55}html{background:var(--bg)}body{background:transparent}
 body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(rgba(11,11,15,var(--bg-dim)),rgba(11,11,15,var(--bg-dim))),url('/bg') center/cover no-repeat}
+/* Glass containers (woeatomo fork): semi-transparent so the custom background shows through.
+   --glass = container opacity (0 = clear, 1 = solid as upstream). --glass-blur = background blur behind cards. */
+:root{--glass:.6;--glass-blur:10px;--card:rgba(21,21,28,var(--glass));--tile:rgba(16,16,22,calc(var(--glass)*.85));--tile-line:rgba(60,56,78,.55);--line:rgba(60,56,78,.6)}
+.card,.dash-hero,.tabs,.summary{-webkit-backdrop-filter:blur(var(--glass-blur));backdrop-filter:blur(var(--glass-blur))}
+.card{background:linear-gradient(180deg,rgba(23,23,31,var(--glass)),rgba(19,19,25,var(--glass)))}
+.card.summary,.summary{background:radial-gradient(ellipse at top right,#31204755,transparent 80%),linear-gradient(180deg,rgba(23,23,31,var(--glass)),rgba(19,19,25,var(--glass)))}
+.dash-hero{background:radial-gradient(ellipse at top right,#31204766,transparent 75%),var(--card)}
+.tabs{background:rgba(17,17,22,var(--glass))}
+.pnl-stat,.tp-emergency,.chart-wrap,.dash-term,.dash-prog{background:rgba(16,16,22,calc(var(--glass)*.85))}
+.strategy-settings{background:rgba(18,15,27,var(--glass))}
+.strategy-buttons,.seg{background:rgba(11,11,15,var(--glass))}
+.dash-output{background:linear-gradient(90deg,rgba(26,18,48,var(--glass)),rgba(15,12,24,var(--glass)))}
+.btn{background:rgba(33,29,45,calc(var(--glass)+.15))}.btn.copy{background:rgba(37,27,57,calc(var(--glass)+.15))}.btn.chart-link,.pool-actions .btn,.dash-quick button{background:rgba(27,25,38,calc(var(--glass)+.15))}
+.btn.danger{background:rgba(66,30,42,calc(var(--glass)+.2))}.btn.good{background:rgba(22,52,37,calc(var(--glass)+.2))}
+input[type=number],input[type=password],input[type=text],select{background:rgba(14,14,20,calc(var(--glass)+.2))}
+.sticky{background:linear-gradient(transparent,rgba(11,11,15,.85) 30%)}
