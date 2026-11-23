@@ -591,3 +591,6 @@ dialog{background:var(--card)!important;border-color:#493363!important}
 .summary-grid .tile-amt{font-size:11px;margin-top:4px;font-weight:600;letter-spacing:-.2px;white-space:nowrap}
 .summary-grid .tile-amt .usd-sub{display:inline;margin-left:4px;font-size:10px;color:#8b8799;font-weight:500}
 .summary-grid .tile-live{font-size:10px;color:var(--hint);margin-top:3px;letter-spacing:.2px}
+/* Custom background (woeatomo fork): put bg.jpg/png/webp in miniapp/public. Without a file only --bg shows. --bg-dim darkens the image for readability. */
+:root{--bg-dim:.55}html{background:var(--bg)}body{background:transparent}
+body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(rgba(11,11,15,var(--bg-dim)),rgba(11,11,15,var(--bg-dim))),url('/bg') center/cover no-repeat}

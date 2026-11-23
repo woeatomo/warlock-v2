@@ -459,6 +459,13 @@ function createApp(opts = {}) {
     if ((req.method === 'GET' || req.method === 'HEAD') && pathname === '/char-avatar.png') {
       return sendFile(res, path.join(PUBLIC_DIR, 'char-avatar.png'), 'image/png', { head: req.method === 'HEAD', cache: 'public, max-age=86400' });
     }
+    // Custom background (woeatomo fork): miniapp/public/bg.jpg|jpeg|png|webp, whichever exists first. None -> 404, the CSS falls back to --bg.
+    if ((req.method === 'GET' || req.method === 'HEAD') && pathname === '/bg') {
+      const BG_TYPES = [['bg.jpg', 'image/jpeg'], ['bg.jpeg', 'image/jpeg'], ['bg.png', 'image/png'], ['bg.webp', 'image/webp']];
+      const hit = BG_TYPES.find(([f]) => { try { return fs.statSync(path.join(PUBLIC_DIR, f)).isFile(); } catch { return false; } });
+      if (!hit) { res.writeHead(404, { 'Cache-Control': 'no-store' }); return res.end(); }
+      return sendFile(res, path.join(PUBLIC_DIR, hit[0]), hit[1], { head: req.method === 'HEAD', cache: 'public, max-age=300' });
+    }
 
     const freshSec = liveControl.LIVE_INITDATA_MAX_AGE_SEC;
 

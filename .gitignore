@@ -15,3 +15,8 @@ paper/
 *.bak-*
 # OS
 .DS_Store
+# Custom mini app background (local only)
+miniapp/public/bg.jpg
+miniapp/public/bg.jpeg
+miniapp/public/bg.png
+miniapp/public/bg.webp
