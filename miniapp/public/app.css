@@ -593,7 +593,7 @@ dialog{background:var(--card)!important;border-color:#493363!important}
 .summary-grid .tile-live{font-size:10px;color:var(--hint);margin-top:3px;letter-spacing:.2px}
 /* Custom background (woeatomo fork): put bg.jpg/png/webp in miniapp/public. Without a file only --bg shows. --bg-dim darkens the image for readability. */
 :root{--bg-dim:.55}html{background:var(--bg)}body{background:transparent}
-body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(rgba(11,11,15,var(--bg-dim)),rgba(11,11,15,var(--bg-dim))),url('/bg') center/cover no-repeat}
+body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(rgba(11,11,15,var(--bg-dim)),rgba(11,11,15,var(--bg-dim))),var(--bg-img,url('/bg')) center/cover no-repeat}
 /* Glass containers (woeatomo fork): semi-transparent so the custom background shows through.
    --glass = container opacity (0 = clear, 1 = solid as upstream). --glass-blur = background blur behind cards. */
 :root{--glass:.6;--glass-blur:10px;--card:rgba(21,21,28,var(--glass));--tile:rgba(16,16,22,calc(var(--glass)*.85));--tile-line:rgba(60,56,78,.55);--line:rgba(60,56,78,.6)}
@@ -610,3 +610,10 @@ body::before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;ba
 .btn.danger{background:rgba(66,30,42,calc(var(--glass)+.2))}.btn.good{background:rgba(22,52,37,calc(var(--glass)+.2))}
 input[type=number],input[type=password],input[type=text],select{background:rgba(14,14,20,calc(var(--glass)+.2))}
 .sticky{background:linear-gradient(transparent,rgba(11,11,15,.85) 30%)}
+/* Tampilan tab (woeatomo fork) */
+.ap-card{padding:14px 15px;margin-bottom:12px}.ap-card h2{margin:0 0 10px;font-size:15px}
+.ap-thumb{width:128px;aspect-ratio:9/16;margin-left:auto;margin-right:auto;text-align:center;padding:8px;border-radius:12px;border:1px solid var(--tile-line);background:#0b0b0f center/cover no-repeat;margin-bottom:10px;display:grid;place-items:center;color:var(--hint);font-size:12px}
+.ap-thumb.ap-empty{background-image:none;border-style:dashed}
+.ap-row{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px}.ap-row label{font-size:13px;font-weight:650}.ap-row b{font-size:12px;color:var(--purple);font-variant-numeric:tabular-nums}
+.ap-range{width:100%;margin:8px 0 2px;accent-color:#8b5cf6;height:28px}
+.ap-note{min-height:18px;text-align:center}.ap-note.ap-err{color:var(--danger)}

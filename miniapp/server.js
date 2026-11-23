@@ -5,6 +5,7 @@ require('../env-config').load(require('path').join(__dirname,'..'));
 
 const http = require('http');
 const fs = require('fs');
+const appearance = require('./appearance-store');   // woeatomo fork: wallpaper + glass settings
 const path = require('path');
 const settings = require('../paper-settings');
 const funding=require('../paper-funding');
@@ -351,6 +352,8 @@ function createApp(opts = {}) {
   const testDefaults = () => { const v = settings.currentValues(paperDir); return { maxPositions: v.MAX_POSITIONS, maxPositionSol: v.POSITION_SOL_OPEN > 0 ? v.POSITION_SOL_OPEN : 1, hours: liveTest.DEFAULTS.hours }; };
   const langRoot = opts.langRoot || ROOT;   // lang.json is shared with the Telegram bot
   const sessionRoot = opts.sessionRoot || ROOT;   // where live-test-session.json lives (the bot reads the same file)
+  const appearanceFile = opts.appearanceFile || path.join(__dirname, 'appearance.json');
+  const appearanceDir = opts.appearanceDir || PUBLIC_DIR;
   const csrf = settings.createCsrfStore();
   const arm = liveControl.createArmStore({ ttlMs: opts.armTtlMs || liveControl.ARM_TTL_MS });
   const rateLimitMs = opts.rateLimitMs != null ? opts.rateLimitMs : 750;
@@ -461,10 +464,22 @@ function createApp(opts = {}) {
     }
     // Custom background (woeatomo fork): miniapp/public/bg.jpg|jpeg|png|webp, whichever exists first. None -> 404, the CSS falls back to --bg.
     if ((req.method === 'GET' || req.method === 'HEAD') && pathname === '/bg') {
-      const BG_TYPES = [['bg.jpg', 'image/jpeg'], ['bg.jpeg', 'image/jpeg'], ['bg.png', 'image/png'], ['bg.webp', 'image/webp']];
-      const hit = BG_TYPES.find(([f]) => { try { return fs.statSync(path.join(PUBLIC_DIR, f)).isFile(); } catch { return false; } });
+      const hit = appearance.findBg(appearanceDir);
       if (!hit) { res.writeHead(404, { 'Cache-Control': 'no-store' }); return res.end(); }
-      return sendFile(res, path.join(PUBLIC_DIR, hit[0]), hit[1], { head: req.method === 'HEAD', cache: 'public, max-age=300' });
+      return sendFile(res, hit.file, hit.type, { head: req.method === 'HEAD', cache: url.searchParams.has('v') ? 'public, max-age=604800, immutable' : 'public, max-age=300' });
+    }
+    if ((req.method === 'GET' || req.method === 'HEAD') && pathname === '/appearance.js') {
+      return sendFile(res, path.join(PUBLIC_DIR, 'appearance.js'), 'application/javascript; charset=utf-8', { head: req.method === 'HEAD' });
+    }
+    // Appearance prefs are cosmetic and public (needed before login to paint the page). A CSRF token is added only for a valid operator initData;
+    // without initData no auth attempt is made, so plain page loads never count toward the lockout.
+    if (req.method === 'GET' && pathname === '/api/appearance') {
+      const out = { ok: true, prefs: appearance.read(appearanceFile), hasBg: !!appearance.findBg(appearanceDir), defaults: appearance.DEFAULTS, limits: appearance.LIMITS };
+      if (req.headers['x-telegram-init-data'] || url.searchParams.get('initData')) {
+        const gate = authInit(req, { initData: url.searchParams.get('initData') || req.headers['x-telegram-init-data'] });
+        if (gate.ok) out.csrf = csrf.issue(gate.userId);
+      }
+      return send(res, 200, out);
     }
 
     const freshSec = liveControl.LIVE_INITDATA_MAX_AGE_SEC;
@@ -526,7 +541,7 @@ function createApp(opts = {}) {
     }
 
     let body;
-    try { body = await readJson(req); }
+    try { body = await readJson(req, pathname === '/api/appearance/bg' ? 6 * 1024 * 1024 : undefined); }
     catch (e) {
       if (e.code === 'TOO_LARGE') return send(res, 413, { ok: false, error: 'body too large' });
       return send(res, 400, { ok: false, error: 'invalid json' });
@@ -534,6 +549,7 @@ function createApp(opts = {}) {
 
     const writeRoutes = new Set([
       '/api/settings', '/api/settings/reset', '/api/pause', '/api/resume', '/api/runs/continue', '/api/runs/activate', '/api/lang', '/api/sl-blacklist/remove',
+      '/api/appearance', '/api/appearance/reset', '/api/appearance/bg', '/api/appearance/bg/delete',
       '/api/paper/capital/deposit', '/api/paper/capital/new-run', '/api/paper/open', '/api/paper/close', '/api/paper/scan',
       '/api/wallet', '/api/wallet/delete', '/api/wallet/rent/claim', '/api/wallet/rpc',
       '/api/live/arm', '/api/live/start', '/api/live/stop', '/api/live/open', '/api/live/close',
@@ -633,6 +649,18 @@ function createApp(opts = {}) {
         let q; try { q = paperRuns.queueActivate(paperDir, body.number, { updatedBy: gate.userId, requestId: body.requestId, state: st }); } catch (e) { return send(res, 409, { ok: false, error: e.message, csrf: csrf.issue(gate.userId) }); }
         audit(`uid=${gate.userId} action=paper-activate-run-queued id=${q.id} run=${q.number}`);
         return send(res, 202, { ...q, csrf: csrf.issue(gate.userId) });
+      }
+      if (pathname.startsWith('/api/appearance')) {
+        let r;
+        try {
+          if (pathname === '/api/appearance') r = appearance.update(appearanceFile, body || {});
+          else if (pathname === '/api/appearance/reset') r = appearance.reset(appearanceFile, appearanceDir);
+          else if (pathname === '/api/appearance/bg') r = appearance.saveBg(appearanceFile, appearanceDir, body && body.image);
+          else r = appearance.deleteBg(appearanceFile, appearanceDir);
+        } catch (e) { r = { ok: false, error: 'Gagal menyimpan: ' + String(e.message || e).slice(0, 120) }; }
+        if (r.ok && r.hasBg === undefined) r.hasBg = !!appearance.findBg(appearanceDir);
+        audit('appearance ' + pathname.replace('/api/appearance', '') + (r.ok ? ' ok' : ' fail'));
+        return send(res, r.ok ? 200 : 400, { ...r, csrf: csrf.issue(gate.userId) });
       }
       if (pathname === '/api/lang') {
         const l = botI18n.setLang(langRoot, body && body.lang);

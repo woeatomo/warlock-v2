@@ -20,3 +20,8 @@ miniapp/public/bg.jpg
 miniapp/public/bg.jpeg
 miniapp/public/bg.png
 miniapp/public/bg.webp
+
+# Mini app appearance prefs (local only)
+miniapp/appearance.json
+miniapp/appearance.json.tmp
+miniapp/public/bg.*.tmp

@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <link rel="icon" type="image/svg+xml" href="/logo.svg">
   <title>Warlock 2.0 — Dry Run / Live</title>
-  <link rel="stylesheet" href="/app.css?v=20261124-glass">
+  <link rel="stylesheet" href="/app.css?v=20261124-appearance">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body class="dash-wide">
@@ -23,6 +23,7 @@
     <button type="button" data-tab="status" class="tab" role="tab">Status</button>
     <button type="button" data-tab="settings" class="tab" role="tab">Settings</button>
     <button type="button" data-tab="wallet" class="tab" role="tab">Wallet</button>
+    <button type="button" data-tab="appearance" class="tab" role="tab">Tampilan</button>
   </nav>
   <main>
     <p id="banner" class="banner hidden"></p>
@@ -205,6 +206,35 @@
       </div>
     </section>
 
+    <section id="panel-appearance" class="panel hidden" aria-label="Tampilan">
+      <div class="card ap-card">
+        <div class="section-head"><h2>Wallpaper</h2></div>
+        <div id="ap-thumb" class="ap-thumb ap-empty"><span id="ap-thumb-label">Belum ada wallpaper</span></div>
+        <input id="ap-file" type="file" accept="image/*" hidden>
+        <div class="btn-row">
+          <button type="button" id="ap-pick" class="btn primary">Pilih gambar</button>
+          <button type="button" id="ap-del" class="btn danger" disabled>Hapus wallpaper</button>
+        </div>
+        <p class="meta">Gambar otomatis dikecilkan (maks 1600 px, JPG) sebelum diupload. Gambar portrait yang agak gelap paling enak dilihat.</p>
+      </div>
+      <div class="card ap-card">
+        <div class="section-head"><h2>Efek kaca</h2></div>
+        <div class="ap-row"><label for="ap-glass">Kepekatan kotak</label><b id="ap-glass-v">60%</b></div>
+        <input id="ap-glass" class="ap-range" type="range" min="0" max="100" step="1" value="60">
+        <p class="meta">0% = bening, 100% = padat seperti semula.</p>
+        <div class="ap-row"><label for="ap-blur">Blur di belakang kotak</label><b id="ap-blur-v">10px</b></div>
+        <input id="ap-blur" class="ap-range" type="range" min="0" max="30" step="1" value="10">
+        <div class="ap-row"><label for="ap-dim">Gelapkan wallpaper</label><b id="ap-dim-v">55%</b></div>
+        <input id="ap-dim" class="ap-range" type="range" min="0" max="90" step="1" value="55">
+        <p class="meta">Perubahan langsung terlihat. Tekan Simpan supaya tetap dipakai saat Mini App dibuka lagi.</p>
+      </div>
+      <p id="ap-note" class="meta ap-note" role="status"></p>
+      <div class="btn-row sticky">
+        <button type="button" id="ap-reset" class="btn ghost">Reset ke default</button>
+        <button type="button" id="ap-save" class="btn primary" disabled>Simpan</button>
+      </div>
+    </section>
+
   </main>
   <dialog id="trade-modal"><div class="section-head"><h2>Detail posisi</h2><button id="close-modal" class="btn ghost">Tutup ✕</button></div><div id="trade-detail"></div></dialog>
   <dialog id="cal-day-modal"><div class="section-head"><h2 id="cal-day-title">Rincian hari</h2><button id="cal-day-close" type="button" class="btn ghost">Tutup ✕</button></div><p class="meta cal-day-sub">Reset 07:00 WIB</p><div id="cal-day-body"></div></dialog>
@@ -212,5 +242,6 @@
   <script src="/i18n.js?v=20261121-profit"></script>
   <script src="/dashboard.js?v=20261121-profit"></script>
   <script src="/app.js?v=20261122-close"></script>
+  <script src="/appearance.js?v=20261124-appearance"></script>
 </body>
 </html>
