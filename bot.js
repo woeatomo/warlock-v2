@@ -17,20 +17,30 @@ const bs58 = require('bs58').default || require('bs58');
 const { createCloseAccountInstruction } = require('@solana/spl-token');
 const reshapeCore = require('./reshape-core');
 const antirug = require('./antirug');
-const tokenPairsCache = new Map(); let dexTokenDownUntil = 0;
-// Every DexScreener pair of one mint (token age = earliest pairCreatedAt). Cached 30 min (errors 2 min). On error the token age falls
-// back to RugCheck detectedAt + Meteora pools. Circuit breaker: after one failure, no DexScreener token call for 2 min, so an outage
-// costs one timeout per scan instead of one per candidate.
-async function dexTokenPairs(mint) {
-  if (!mint) return { pairs: [] };
-  const hit = tokenPairsCache.get(mint);
-  if (hit && Date.now() - hit.t < (hit.r.error ? 2 * 60_000 : 30 * 60_000)) return hit.r;
-  if (Date.now() < dexTokenDownUntil) return { pairs: [], error: 'DexScreener down (jeda 2 menit)' };
-  let r;
-  try { const j = await getJSON(`https://api.dexscreener.com/tokens/v1/solana/${mint}`, { timeoutMs: 6000 }, 1); r = { pairs: (Array.isArray(j) ? j : j?.pairs || []).filter((x) => !x?.chainId || x.chainId === 'solana') }; }
-  catch (e) { r = { pairs: [], error: e.message }; dexTokenDownUntil = Date.now() + 2 * 60_000; log(`token age: DexScreener gagal (${e.message.slice(0, 80)}), jeda 2 menit; pakai RugCheck + pool Meteora`); }
-  tokenPairsCache.set(mint, { t: Date.now(), r }); if (tokenPairsCache.size > 500) tokenPairsCache.delete(tokenPairsCache.keys().next().value);
-  return r;
+const jupTokenCache = new Map(); let jupTokenDownUntil = 0;
+// Token age source (same as Meridian-OP): Jupiter tokens/v2 search, up to 100 mints per request (comma separated), so one scan costs
+// about one request. A creation date never changes: found = cached 24 h, no date = 30 min. Failures are not cached per mint; a
+// failure pauses Jupiter token lookups for 2 min (the filter then fails closed: "umur token tidak diketahui").
+async function jupTokenPrefetch(mints) {
+  const want = [...new Set(mints.filter(Boolean))].filter((m) => { const h = jupTokenCache.get(m); return !h || Date.now() - h.t > (h.createdAtMs != null ? 24 * 3_600_000 : 30 * 60_000); });
+  if (!want.length) return { fetched: 0 };
+  if (Date.now() < jupTokenDownUntil) return { fetched: 0, error: 'Jupiter token API jeda 2 menit setelah gagal' };
+  let fetched = 0;
+  for (let i = 0; i < want.length; i += 100) {
+    const batch = want.slice(i, i + 100);
+    try {
+      const j = await jupGetJSON('https://lite-api.jup.ag/tokens/v2/search?query=' + batch.join(','), { timeoutMs: 10000 }, 2);
+      const byId = new Map((Array.isArray(j) ? j : []).filter((x) => x && x.id).map((x) => [x.id, x]));
+      for (const m of batch) jupTokenCache.set(m, { t: Date.now(), createdAtMs: tokenAge.createdAtMs(byId.get(m)) });
+      fetched += batch.length;
+    } catch (e) {
+      jupTokenDownUntil = Date.now() + 2 * 60_000;
+      log(`token age: Jupiter gagal (${String(e.message).slice(0, 100)}), jeda 2 menit; token tanpa data umur di-skip`);
+      return { fetched, error: e.message };
+    }
+    if (jupTokenCache.size > 3000) for (const k of [...jupTokenCache.keys()].slice(0, 1000)) jupTokenCache.delete(k);
+  }
+  return { fetched };
 }
 const telegram = require('./telegram-notify');
 const paperCap = require('./paper-capital');
@@ -120,6 +130,7 @@ const CFG = {
   MAX_PUMP1H: +(process.env.MAX_PUMP1H || 0.135),
   MIN_AGE_H: +(process.env.MIN_AGE_H || 24),
   MIN_TOKEN_AGE_H: +(process.env.MIN_TOKEN_AGE_H || 0),   // 0 = off; overwritten by the shared settings
+  MAX_TOKEN_AGE_H: +(process.env.MAX_TOKEN_AGE_H || 0),
   MIN_LIQ_USD: +(process.env.MIN_LIQ_USD || 10000),
   MAX_POS_TVL_FRAC: +(process.env.MAX_POS_TVL_FRAC || 0.05),
   MAX_POSITIONS:5,CAPITAL_ASSET:'USDC',MAX_LIQ_USD:100000,MAX_NONREFUND_SOL:.05,REOPEN_COOLDOWN_MIN:30,MAX_PUMP24H_PCT:200,POSITION_USDC:0,UPPER_BUFFER_BINS:0,OOR_RIGHT_CONFIRM_POLLS:2,OOR_RIGHT_MIN_BINS:5,OOR_RIGHT_REPOSITION_MIN_PNL_PCT:-3,RUGCHECK_STICKY_DAYS:7,FEE_TURNOVER_MAX_PCT:60,FEE_TURNOVER_TVL_BELOW_USD:25000,OOR_RIGHT_MIN_PROFIT_PCT:.5,OOR_RIGHT_MAX_REPOSITIONS:2,
@@ -486,7 +497,8 @@ async function performScan(policy,opts={}) {
   const pvpMode = ff.antiPvp;
   const pvpUniverse = [...seen.values()].map(antiPvp.fromPool);
   log(`token filters: master=${filtersOn ? 'ON' : 'OFF'} pump1h=${fOn('PUMP1H_FILTER_ENABLED')} pump24h=${fOn('PUMP24H_FILTER_ENABLED')} rugcheck=${!!policy.RUGCHECK} topHolders=${!!policy.CHECK_TOP_HOLDERS} insiders=${fOn('CHECK_INSIDERS')}(<=${policy.MAX_INSIDER_PCT ?? 25}%) antiPvp=${pvpMode}(twin liq>=$${policy.ANTI_PVP_MIN_LIQ_USD ?? 10000}) tvlDrop=${ff.tvlDrop}(>=${policy.TVL_DROP_MAX_PCT ?? 45}%) slBlacklist=${policy.SL_BLACKLIST_ENABLED !== false}`);
-  const poolsByMint = new Map(); for (const q of seen.values()) { const m = q.token_x?.address; if (m) { if (!poolsByMint.has(m)) poolsByMint.set(m, []); poolsByMint.get(m).push(q); } }
+  const tokenAgeOn = tokenAge.enabled(policy.MIN_TOKEN_AGE_H, policy.MAX_TOKEN_AGE_H);
+  const jupAge = tokenAgeOn ? await jupTokenPrefetch(c.slice(0, 40).map((p) => p.token_x?.address)) : {};   // one batch request for every candidate mint
   for (const p of c.slice(0,40)) { try {   // M8 (live-bugfix): one pool's RPC / API failure skips that pool only, never the whole scan
     screeningPool = p;
     const ageH = (nowS - createdAtSec(p)) / 3600;
@@ -495,12 +507,9 @@ async function performScan(policy,opts={}) {
     {const cooldown=entryPolicy.cooldownReason(recentHistory,p.address,policy.REOPEN_COOLDOWN_MIN);if(cooldown&&skipSoft(p,tag,cooldown))continue;}
     if (ff.tvlDrop) { const ev = tvlDrop.evaluatePool(p, recentEntries, policy.TVL_DROP_MAX_PCT ?? 45); if (!ev.ok && skipSoft(p, tag, ev.why)) continue; }
     if (ff.oldDump && policy.OLD_TOKEN_MODE === 'BLOCK_ALL') { const ot = antirug.evaluateOldToken(Number(p.created_at) > 0 ? ageH : null, policy.OLD_DUMP_MIN_AGE_H ?? 400); if (!ot.ok && skipSoft(p, tag, ot.why)) continue; }
-    if ((+policy.MIN_TOKEN_AGE_H || 0) > 0) {   // token (mint) age, not pool age: an old token with a new pool still counts as old
-      // RugCheck is only a fallback (DexScreener failed) or read from cache: no extra RugCheck request per candidate.
-      const mintX = p.token_x?.address, pools = poolsByMint.get(mintX) || [], ds = await dexTokenPairs(mintX), rc = rugCache.get(mintX);
-      const report = ds.error ? await fetchRugCheck(mintX) : (rc && !rc.report?.error ? rc.report : null);
-      const est = tokenAge.estimate({ mint: mintX, report, pools, pairs: ds.pairs });
-      const ta = tokenAge.evaluate(est, policy.MIN_TOKEN_AGE_H);
+    if (tokenAgeOn) {   // token (mint) age from Jupiter, not pool age: an old token with a new pool still counts as old
+      const est = tokenAge.estimate({ ...jupTokenCache.get(p.token_x?.address), ...(jupAge.error && !jupTokenCache.has(p.token_x?.address) ? { error: jupAge.error } : {}) });
+      const ta = tokenAge.evaluate(est, policy.MIN_TOKEN_AGE_H, policy.MAX_TOKEN_AGE_H);
       D(p).tokenAge = est;
       if (!ta.ok && skipSoft(p, tag, ta.why)) continue;
     }
@@ -606,7 +615,7 @@ async function performScan(policy,opts={}) {
     r.isOpen=true;r.openInfo=entryReasons.build(pos,{policy,pass:entryPassCache.get(pos.pool+'|'+pos.openedAt)||null,latest:latestOf(p)});return r;};
   const display = [...openPosNow.map(pos=>openRow(pos,seen.get(pos.pool))),...screenSource.sortRows([...displayed.values()].filter(p=>!openSet.has(p.address)).map(toRow))];
   scan.last = { at:now(), atWib:wib(),startedAt:scanStartedAt,requestId:refreshRequest?.id,policy:screenRefresh.policy(policy),policyKey:screenRefresh.signature(policy), fetched:seen.size, basic:c.length, passed:picks.length, rejects:rej,
-    filters:{REOPEN_COOLDOWN_MIN:policy.REOPEN_COOLDOWN_MIN,MAX_PUMP24H_PCT:policy.MAX_PUMP24H_PCT,MAX_LIQ_USD:policy.MAX_LIQ_USD,MAX_NONREFUND_SOL:policy.MAX_NONREFUND_SOL,MIN_FT:policy.MIN_FT,MIN_LIQ_USD:policy.MIN_LIQ_USD,MIN_AGE_H:policy.MIN_AGE_H,MIN_TOKEN_AGE_H:policy.MIN_TOKEN_AGE_H||0,MIN_BIN_STEP:policy.MIN_BIN_STEP,MAX_BIN_STEP:policy.MAX_BIN_STEP,FILTERS_ENABLED:filtersOn,PUMP1H_FILTER_ENABLED:fOn('PUMP1H_FILTER_ENABLED'),PUMP24H_FILTER_ENABLED:fOn('PUMP24H_FILTER_ENABLED'),RUGCHECK:!!policy.RUGCHECK,CHECK_TOP_HOLDERS:!!policy.CHECK_TOP_HOLDERS,CHECK_INSIDERS:fOn('CHECK_INSIDERS'),MAX_INSIDER_PCT:policy.MAX_INSIDER_PCT,ANTI_PVP_MODE:pvpMode,ANTI_PVP_MIN_LIQ_USD:policy.ANTI_PVP_MIN_LIQ_USD,TVL_DROP_FILTER_ENABLED:ff.tvlDrop,TVL_DROP_MAX_PCT:policy.TVL_DROP_MAX_PCT},
+    filters:{REOPEN_COOLDOWN_MIN:policy.REOPEN_COOLDOWN_MIN,MAX_PUMP24H_PCT:policy.MAX_PUMP24H_PCT,MAX_LIQ_USD:policy.MAX_LIQ_USD,MAX_NONREFUND_SOL:policy.MAX_NONREFUND_SOL,MIN_FT:policy.MIN_FT,MIN_LIQ_USD:policy.MIN_LIQ_USD,MIN_AGE_H:policy.MIN_AGE_H,MIN_TOKEN_AGE_H:policy.MIN_TOKEN_AGE_H||0,MAX_TOKEN_AGE_H:policy.MAX_TOKEN_AGE_H||0,MIN_BIN_STEP:policy.MIN_BIN_STEP,MAX_BIN_STEP:policy.MAX_BIN_STEP,FILTERS_ENABLED:filtersOn,PUMP1H_FILTER_ENABLED:fOn('PUMP1H_FILTER_ENABLED'),PUMP24H_FILTER_ENABLED:fOn('PUMP24H_FILTER_ENABLED'),RUGCHECK:!!policy.RUGCHECK,CHECK_TOP_HOLDERS:!!policy.CHECK_TOP_HOLDERS,CHECK_INSIDERS:fOn('CHECK_INSIDERS'),MAX_INSIDER_PCT:policy.MAX_INSIDER_PCT,ANTI_PVP_MODE:pvpMode,ANTI_PVP_MIN_LIQ_USD:policy.ANTI_PVP_MIN_LIQ_USD,TVL_DROP_FILTER_ENABLED:ff.tvlDrop,TVL_DROP_MAX_PCT:policy.TVL_DROP_MAX_PCT},
     source:universe.source,sourceLabel:universe.sourceLabel,sourceReason:universe.sourceReason,
     hawkfiEndpoint:universe.hawkfiEndpoint,hawkfiVerified:false,coverage:universe.coverage,
     display, near:near.slice(0,8).map(p=>screenSource.row(p,[`fee/tvl${policy.FT_WINDOW}<${policy.MIN_FT}%`])),
@@ -639,7 +648,7 @@ async function performScan(policy,opts={}) {
           let pu=d.pu,pu24=d.pu24,pumpSource=null;
           if((ffD.pump1h&&pu===undefined)||((ffD.pump24h||(ffD.oldDump&&policy.OLD_TOKEN_MODE!=='BLOCK_ALL'&&(nowS-createdAtSec(p))/3600>(policy.OLD_DUMP_MIN_AGE_H??400)))&&pu24===undefined)){const pr=await diagPair(p.address,()=>diagStats.pair<MAX_NEW&&canFetch()&&(diagStats.pair++,true));if(pr){if(pu===undefined)pu=pr.h1;if(pu24===undefined)pu24=pr.h24;pumpSource='DexScreener';}}
           let tAge=d.tokenAge;
-          if(tAge===undefined&&mint&&(+policy.MIN_TOKEN_AGE_H||0)>0){const tp=tokenPairsCache.get(mint);if(tp&&!tp.r.error)tAge=tokenAge.estimate({mint,report:report&&!report.error?report:null,pools:poolsByMint.get(mint)||[],pairs:tp.r.pairs});}   // display only, cache only (no new request); not fetched = "belum dicek"
+          if(tAge===undefined&&mint&&tokenAgeOn&&jupTokenCache.has(mint))tAge=tokenAge.estimate(jupTokenCache.get(mint));   // display only, cache only (no new request); not fetched = "belum dicek"
           const list=screenReasons.evaluate(p,{policy,nowS,flags:ffD,tokenAge:tAge,sl:mint?slMints[mint]||null:null,cooldown:policy.PAPER?entryPolicy.cooldownReason(recentHistory,p.address,policy.REOPEN_COOLDOWN_MIN):null,
             open:{samePool:openPos.some(x=>x.pool===p.address),caPoolName:(openPos.find(x=>x.mintX===mint&&x.pool!==p.address)||{}).name||null,count:openPos.length,max:policy.MAX_POSITIONS},
             entryCost:p.entryCostEstimate||undefined,pu,pu24,pumpSource,mint:d.mint,report,pvp,rugSticky:mint&&policy.RUGCHECK&&(policy.RUGCHECK_STICKY_DAYS??7)>0?rugSticky.get(PAPER_DIR,mint,policy.RUGCHECK_STICKY_DAYS??7):null,holdersExclude:[p.reserve_x,p.address],
@@ -1143,6 +1152,7 @@ function applyPaperSettings({ logAlways = false } = {}) {
   CFG.MIN_LIQ_USD = values.MIN_LIQ_USD;
   CFG.MIN_AGE_H = values.MIN_AGE_H;
   CFG.MIN_TOKEN_AGE_H = values.MIN_TOKEN_AGE_H ?? 0;
+  CFG.MAX_TOKEN_AGE_H = values.MAX_TOKEN_AGE_H ?? 0;
   for(const k of ['OOR_RIGHT_REPOSITION_MIN_PNL_PCT','FEE_TURNOVER_MAX_PCT','FEE_TURNOVER_TVL_BELOW_USD','RUGCHECK_STICKY_DAYS','OOR_RIGHT_MIN_BINS','NOTIFY_RESHAPE','MAX_POSITIONS','CAPITAL_ASSET','REOPEN_COOLDOWN_MIN','MAX_PUMP24H_PCT','MAX_LIQ_USD','MAX_NONREFUND_SOL','MIN_BIN_STEP','MAX_BIN_STEP','POSITION_USDC','POSITION_SOL_OPEN','UPPER_BUFFER_BINS','OOR_RIGHT_CONFIRM_POLLS','OOR_RIGHT_MIN_PROFIT_PCT','OOR_RIGHT_MAX_REPOSITIONS'])CFG[k]=values[k];
   CFG.TP = values.TP;
   for(const k of ['TP_USD_PCT','OOR_RIGHT_CLOSE','TRAIL_ENABLED','TRAIL_ARM_PCT','TRAIL_DROP_PCT','OOR_MAX_MIN','EMERGENCY_TP_ENABLED','EMERGENCY_TP_TRIGGER_RANGE_PCT','EMERGENCY_TP_PCT','EMERGENCY_SLPLUS_ENABLED','EMERGENCY_SLPLUS_ARM_PCT','EMERGENCY_SLPLUS_LOCK_PCT','EMERGENCY_SLPLUS_CONFIRM_POLLS','EMERGENCY_SLPLUS_FLOOR_PCT','EMERGENCY_SLPLUS_FLOOR_POLLS','SL_BLACKLIST_ENABLED','STALE_CLOSE_ENABLED','STALE_EXIT_MODE','STALE_EXIT_PCT']) CFG[k]=values[k];
@@ -1162,7 +1172,7 @@ function applyPaperSettings({ logAlways = false } = {}) {
   {const ff=antiPvp.filterFlags(values,BASE_TOKEN_CHECKS);CFG.RUGCHECK=ff.rugcheck;CFG.CHECK_TOP_HOLDERS=ff.topHolders;}
   if (VARIANTS[0]) VARIANTS[0].n = values.RESHAPE_N;
   if (changed || logAlways) {
-    log(`paper settings applied: MIN_FT=${values.MIN_FT}% MIN_LIQ_USD=${values.MIN_LIQ_USD} MIN_AGE_H=${values.MIN_AGE_H} MIN_TOKEN_AGE_H=${values.MIN_TOKEN_AGE_H ?? 0} BIN_STEP=${values.MIN_BIN_STEP}..${values.MAX_BIN_STEP} POSITION_USDC=${values.POSITION_USDC} UPPER_BUFFER_BINS=${values.UPPER_BUFFER_BINS} rightConfirm=${values.OOR_RIGHT_CONFIRM_POLLS} RESHAPE_N=${values.RESHAPE_N} TP_USDC=${values.TP_USD_PCT}% rightOor=${values.OOR_RIGHT_CLOSE} trailing=${values.TRAIL_ENABLED} emergencyTp=${values.EMERGENCY_TP_ENABLED}(priceDrop>=${values.EMERGENCY_TP_TRIGGER_RANGE_PCT}% of open lower range -> TP ${values.EMERGENCY_TP_PCT}%) leftOorMin=${values.OOR_MAX_MIN} emergency=${values.EMERGENCY_DROP} maxHours=${values.MAX_HOURS} GAS_BUFFER_SOL=${values.GAS_BUFFER_SOL} pump1h=${values.MAX_PUMP1H} pump24h=${values.MAX_PUMP_24H} volSpike=${values.VOL_SPIKE_1H_OF_24H} tokenFilters=${values.FILTERS_ENABLED?'ON':'OFF'}(pump1h=${values.PUMP1H_FILTER_ENABLED} pump24h=${values.PUMP24H_FILTER_ENABLED} rugcheck=${values.RUGCHECK_ENABLED} topHolders=${values.TOP_HOLDERS_ENABLED} insiders=${values.CHECK_INSIDERS}<=${values.MAX_INSIDER_PCT}% antiPvp=${values.ANTI_PVP_MODE}>=$${values.ANTI_PVP_MIN_LIQ_USD})`);
+    log(`paper settings applied: MIN_FT=${values.MIN_FT}% MIN_LIQ_USD=${values.MIN_LIQ_USD} MIN_AGE_H=${values.MIN_AGE_H} MIN_TOKEN_AGE_H=${values.MIN_TOKEN_AGE_H ?? 0} MAX_TOKEN_AGE_H=${values.MAX_TOKEN_AGE_H ?? 0} BIN_STEP=${values.MIN_BIN_STEP}..${values.MAX_BIN_STEP} POSITION_USDC=${values.POSITION_USDC} UPPER_BUFFER_BINS=${values.UPPER_BUFFER_BINS} rightConfirm=${values.OOR_RIGHT_CONFIRM_POLLS} RESHAPE_N=${values.RESHAPE_N} TP_USDC=${values.TP_USD_PCT}% rightOor=${values.OOR_RIGHT_CLOSE} trailing=${values.TRAIL_ENABLED} emergencyTp=${values.EMERGENCY_TP_ENABLED}(priceDrop>=${values.EMERGENCY_TP_TRIGGER_RANGE_PCT}% of open lower range -> TP ${values.EMERGENCY_TP_PCT}%) leftOorMin=${values.OOR_MAX_MIN} emergency=${values.EMERGENCY_DROP} maxHours=${values.MAX_HOURS} GAS_BUFFER_SOL=${values.GAS_BUFFER_SOL} pump1h=${values.MAX_PUMP1H} pump24h=${values.MAX_PUMP_24H} volSpike=${values.VOL_SPIKE_1H_OF_24H} tokenFilters=${values.FILTERS_ENABLED?'ON':'OFF'}(pump1h=${values.PUMP1H_FILTER_ENABLED} pump24h=${values.PUMP24H_FILTER_ENABLED} rugcheck=${values.RUGCHECK_ENABLED} topHolders=${values.TOP_HOLDERS_ENABLED} insiders=${values.CHECK_INSIDERS}<=${values.MAX_INSIDER_PCT}% antiPvp=${values.ANTI_PVP_MODE}>=$${values.ANTI_PVP_MIN_LIQ_USD})`);
     lastAppliedSettingsKey = key;
   }
   return values;

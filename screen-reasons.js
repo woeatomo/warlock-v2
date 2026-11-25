@@ -69,10 +69,10 @@ function evaluate(p, ctx) {
     else if (ctx.pu24 === null) fail('old_dump', `Token tua lagi dump: umur ${ageH.toFixed(0)}j > ${P.OLD_DUMP_MIN_AGE_H ?? 400}j, harga 24 jam tidak ada`);
     else if (ctx.pu24 * 100 < lim) fail('old_dump', `Token tua lagi dump: umur ${ageH.toFixed(0)}j > ${P.OLD_DUMP_MIN_AGE_H ?? 400}j & ${ctx.pu24 < 0 ? 'dump' : 'pump'} 24j ${pct(ctx.pu24 * 100, 0)} < ${lim}%${src}`);
   }
-  if ((+P.MIN_TOKEN_AGE_H || 0) > 0) {
-    const ta = ctx.tokenAge === undefined ? null : tokenAge.evaluate(ctx.tokenAge, P.MIN_TOKEN_AGE_H);
+  if (tokenAge.enabled(P.MIN_TOKEN_AGE_H, P.MAX_TOKEN_AGE_H)) {
+    const ta = ctx.tokenAge === undefined ? null : tokenAge.evaluate(ctx.tokenAge, P.MIN_TOKEN_AGE_H, P.MAX_TOKEN_AGE_H);
     if (!ta) todo('token_age', 'Umur token');
-    else if (!ta.ok) fail('token_age', ta.unknown ? 'Umur token: tidak diketahui (RugCheck/DexScreener/Meteora kosong)' : `Umur token: ${tokenAge.fmt(ta.ageH)} < min ${P.MIN_TOKEN_AGE_H} jam (${ctx.tokenAge.source})`);
+    else if (!ta.ok) fail('token_age', ta.unknown ? 'Umur token: tidak diketahui (Jupiter)' : 'Umur token: ' + ta.why.replace(/^umur token /, '') + ' (Jupiter)');
   }
   if (ctx.mint && !ctx.mint.ok) fail('mint', 'Mint on-chain: ' + ctx.mint.why);
   const rep = ctx.report, needReport = P.RUGCHECK || P.CHECK_TOP_HOLDERS || F.insiders;
