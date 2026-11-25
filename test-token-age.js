@@ -63,4 +63,30 @@ t('bot.js applies the setting and runs the filter in the decision loop', () => {
   assert.match(s, /api\.dexscreener\.com\/tokens\/v1\/solana\//);
   assert.match(fs.readFileSync(path.join(__dirname, 'miniapp/public/app.js'), 'utf8'), /'MIN_AGE_H', 'MIN_TOKEN_AGE_H'/);
 });
-console.log(`${n} tests passed`);
+
+// Behaviour of the bot.js pieces, run from the real source with stubbed network (no bot start, no state).
+const botSrc = fs.readFileSync(path.join(__dirname, 'bot.js'), 'utf8');
+const grab = (start, end) => { const i = botSrc.indexOf(start); assert.ok(i >= 0, start); const j = botSrc.indexOf(end, i); assert.ok(j > i, end); return botSrc.slice(i, j); };
+async function asyncTests() {
+  const fnSrc = grab('const tokenPairsCache = new Map();', 'const telegram = require(');
+  let calls = 0, fail = true; const logs = [];
+  const make = new Function('getJSON', 'log', fnSrc + '; return { dexTokenPairs, cache: tokenPairsCache };');
+  const m = make(async (url) => { calls++; if (fail) throw new Error('timeout'); return [{ chainId: 'solana', baseToken: { address: url.split('/').pop() }, pairCreatedAt: nowMs - 99 * H }]; }, (x) => logs.push(x));
+  const a = await m.dexTokenPairs('MINT_A'); assert.ok(a.error); assert.strictEqual(calls, 1);
+  const b = await m.dexTokenPairs('MINT_B'); assert.ok(b.error); assert.strictEqual(calls, 1, 'circuit breaker: no second request while DexScreener is down');
+  assert.strictEqual(logs.length, 1);
+  console.log('ok - DexScreener outage costs one request, then 2 min pause'); n++;
+  fail = false; const m2 = make(async (url) => { calls++; return [{ chainId: 'solana', baseToken: { address: url.split('/').pop() }, pairCreatedAt: nowMs - 99 * H }]; }, () => {});
+  calls = 0; await m2.dexTokenPairs('MINT_C'); await m2.dexTokenPairs('MINT_C');
+  assert.strictEqual(calls, 1, 'second lookup of the same mint is served from cache'); console.log('ok - token pairs cached per mint'); n++;
+}
+t('filter OFF (0) makes no request: every token-age call is inside the MIN_TOKEN_AGE_H > 0 guard', () => {
+  const block = grab('if ((+policy.MIN_TOKEN_AGE_H || 0) > 0) {', 'if (!ta.ok && skipSoft');
+  assert.match(block, /dexTokenPairs\(mintX\)/);
+  assert.strictEqual((botSrc.match(/dexTokenPairs\(/g) || []).length, 2, 'only the definition and the guarded call');
+});
+t('RugCheck is not fetched extra: only as DexScreener fallback, otherwise cache', () => {
+  const block = grab('if ((+policy.MIN_TOKEN_AGE_H || 0) > 0) {', 'if (!ta.ok && skipSoft');
+  assert.match(block, /ds\.error \? await fetchRugCheck\(mintX\) : \(rc && !rc\.report\?\.error \? rc\.report : null\)/);
+});
+asyncTests().then(() => console.log(`${n} tests passed`)).catch((e) => { console.error(e); process.exit(1); });

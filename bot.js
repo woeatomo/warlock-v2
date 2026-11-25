@@ -17,16 +17,18 @@ const bs58 = require('bs58').default || require('bs58');
 const { createCloseAccountInstruction } = require('@solana/spl-token');
 const reshapeCore = require('./reshape-core');
 const antirug = require('./antirug');
-const tokenPairsCache = new Map();
-// Every DexScreener pair of one mint (token age = earliest pairCreatedAt). Cached 30 min (errors 2 min). Fail-open: on error the
-// token age falls back to RugCheck detectedAt + Meteora pools.
+const tokenPairsCache = new Map(); let dexTokenDownUntil = 0;
+// Every DexScreener pair of one mint (token age = earliest pairCreatedAt). Cached 30 min (errors 2 min). On error the token age falls
+// back to RugCheck detectedAt + Meteora pools. Circuit breaker: after one failure, no DexScreener token call for 2 min, so an outage
+// costs one timeout per scan instead of one per candidate.
 async function dexTokenPairs(mint) {
   if (!mint) return { pairs: [] };
   const hit = tokenPairsCache.get(mint);
   if (hit && Date.now() - hit.t < (hit.r.error ? 2 * 60_000 : 30 * 60_000)) return hit.r;
+  if (Date.now() < dexTokenDownUntil) return { pairs: [], error: 'DexScreener down (jeda 2 menit)' };
   let r;
-  try { const j = await getJSON(`https://api.dexscreener.com/tokens/v1/solana/${mint}`, { timeoutMs: 8000 }, 1); r = { pairs: (Array.isArray(j) ? j : j?.pairs || []).filter((x) => !x?.chainId || x.chainId === 'solana') }; }
-  catch (e) { r = { pairs: [], error: e.message }; }
+  try { const j = await getJSON(`https://api.dexscreener.com/tokens/v1/solana/${mint}`, { timeoutMs: 6000 }, 1); r = { pairs: (Array.isArray(j) ? j : j?.pairs || []).filter((x) => !x?.chainId || x.chainId === 'solana') }; }
+  catch (e) { r = { pairs: [], error: e.message }; dexTokenDownUntil = Date.now() + 2 * 60_000; log(`token age: DexScreener gagal (${e.message.slice(0, 80)}), jeda 2 menit; pakai RugCheck + pool Meteora`); }
   tokenPairsCache.set(mint, { t: Date.now(), r }); if (tokenPairsCache.size > 500) tokenPairsCache.delete(tokenPairsCache.keys().next().value);
   return r;
 }
@@ -484,6 +486,7 @@ async function performScan(policy,opts={}) {
   const pvpMode = ff.antiPvp;
   const pvpUniverse = [...seen.values()].map(antiPvp.fromPool);
   log(`token filters: master=${filtersOn ? 'ON' : 'OFF'} pump1h=${fOn('PUMP1H_FILTER_ENABLED')} pump24h=${fOn('PUMP24H_FILTER_ENABLED')} rugcheck=${!!policy.RUGCHECK} topHolders=${!!policy.CHECK_TOP_HOLDERS} insiders=${fOn('CHECK_INSIDERS')}(<=${policy.MAX_INSIDER_PCT ?? 25}%) antiPvp=${pvpMode}(twin liq>=$${policy.ANTI_PVP_MIN_LIQ_USD ?? 10000}) tvlDrop=${ff.tvlDrop}(>=${policy.TVL_DROP_MAX_PCT ?? 45}%) slBlacklist=${policy.SL_BLACKLIST_ENABLED !== false}`);
+  const poolsByMint = new Map(); for (const q of seen.values()) { const m = q.token_x?.address; if (m) { if (!poolsByMint.has(m)) poolsByMint.set(m, []); poolsByMint.get(m).push(q); } }
   for (const p of c.slice(0,40)) { try {   // M8 (live-bugfix): one pool's RPC / API failure skips that pool only, never the whole scan
     screeningPool = p;
     const ageH = (nowS - createdAtSec(p)) / 3600;
@@ -493,8 +496,10 @@ async function performScan(policy,opts={}) {
     if (ff.tvlDrop) { const ev = tvlDrop.evaluatePool(p, recentEntries, policy.TVL_DROP_MAX_PCT ?? 45); if (!ev.ok && skipSoft(p, tag, ev.why)) continue; }
     if (ff.oldDump && policy.OLD_TOKEN_MODE === 'BLOCK_ALL') { const ot = antirug.evaluateOldToken(Number(p.created_at) > 0 ? ageH : null, policy.OLD_DUMP_MIN_AGE_H ?? 400); if (!ot.ok && skipSoft(p, tag, ot.why)) continue; }
     if ((+policy.MIN_TOKEN_AGE_H || 0) > 0) {   // token (mint) age, not pool age: an old token with a new pool still counts as old
-      const mintX = p.token_x?.address, ds = await dexTokenPairs(mintX), rep = await fetchRugCheck(mintX);
-      const est = tokenAge.estimate({ mint: mintX, report: rep, pools: [...seen.values()], pairs: ds.pairs });
+      // RugCheck is only a fallback (DexScreener failed) or read from cache: no extra RugCheck request per candidate.
+      const mintX = p.token_x?.address, pools = poolsByMint.get(mintX) || [], ds = await dexTokenPairs(mintX), rc = rugCache.get(mintX);
+      const report = ds.error ? await fetchRugCheck(mintX) : (rc && !rc.report?.error ? rc.report : null);
+      const est = tokenAge.estimate({ mint: mintX, report, pools, pairs: ds.pairs });
       const ta = tokenAge.evaluate(est, policy.MIN_TOKEN_AGE_H);
       D(p).tokenAge = est;
       if (!ta.ok && skipSoft(p, tag, ta.why)) continue;
@@ -634,7 +639,7 @@ async function performScan(policy,opts={}) {
           let pu=d.pu,pu24=d.pu24,pumpSource=null;
           if((ffD.pump1h&&pu===undefined)||((ffD.pump24h||(ffD.oldDump&&policy.OLD_TOKEN_MODE!=='BLOCK_ALL'&&(nowS-createdAtSec(p))/3600>(policy.OLD_DUMP_MIN_AGE_H??400)))&&pu24===undefined)){const pr=await diagPair(p.address,()=>diagStats.pair<MAX_NEW&&canFetch()&&(diagStats.pair++,true));if(pr){if(pu===undefined)pu=pr.h1;if(pu24===undefined)pu24=pr.h24;pumpSource='DexScreener';}}
           let tAge=d.tokenAge;
-          if(tAge===undefined&&mint&&(+policy.MIN_TOKEN_AGE_H||0)>0){const tp=tokenPairsCache.get(mint),rc=rugCache.get(mint);if(tp||rc)tAge=tokenAge.estimate({mint,report:report||rc?.report||null,pools:[...seen.values()],pairs:tp?.r?.pairs||[]});if(tAge&&!tAge.known&&!(tp&&rc))tAge=undefined;}
+          if(tAge===undefined&&mint&&(+policy.MIN_TOKEN_AGE_H||0)>0){const tp=tokenPairsCache.get(mint);if(tp&&!tp.r.error)tAge=tokenAge.estimate({mint,report:report&&!report.error?report:null,pools:poolsByMint.get(mint)||[],pairs:tp.r.pairs});}   // display only, cache only (no new request); not fetched = "belum dicek"
           const list=screenReasons.evaluate(p,{policy,nowS,flags:ffD,tokenAge:tAge,sl:mint?slMints[mint]||null:null,cooldown:policy.PAPER?entryPolicy.cooldownReason(recentHistory,p.address,policy.REOPEN_COOLDOWN_MIN):null,
             open:{samePool:openPos.some(x=>x.pool===p.address),caPoolName:(openPos.find(x=>x.mintX===mint&&x.pool!==p.address)||{}).name||null,count:openPos.length,max:policy.MAX_POSITIONS},
             entryCost:p.entryCostEstimate||undefined,pu,pu24,pumpSource,mint:d.mint,report,pvp,rugSticky:mint&&policy.RUGCHECK&&(policy.RUGCHECK_STICKY_DAYS??7)>0?rugSticky.get(PAPER_DIR,mint,policy.RUGCHECK_STICKY_DAYS??7):null,holdersExclude:[p.reserve_x,p.address],
