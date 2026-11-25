@@ -17,6 +17,19 @@ const bs58 = require('bs58').default || require('bs58');
 const { createCloseAccountInstruction } = require('@solana/spl-token');
 const reshapeCore = require('./reshape-core');
 const antirug = require('./antirug');
+const tokenPairsCache = new Map();
+// Every DexScreener pair of one mint (token age = earliest pairCreatedAt). Cached 30 min (errors 2 min). Fail-open: on error the
+// token age falls back to RugCheck detectedAt + Meteora pools.
+async function dexTokenPairs(mint) {
+  if (!mint) return { pairs: [] };
+  const hit = tokenPairsCache.get(mint);
+  if (hit && Date.now() - hit.t < (hit.r.error ? 2 * 60_000 : 30 * 60_000)) return hit.r;
+  let r;
+  try { const j = await getJSON(`https://api.dexscreener.com/tokens/v1/solana/${mint}`, { timeoutMs: 8000 }, 1); r = { pairs: (Array.isArray(j) ? j : j?.pairs || []).filter((x) => !x?.chainId || x.chainId === 'solana') }; }
+  catch (e) { r = { pairs: [], error: e.message }; }
+  tokenPairsCache.set(mint, { t: Date.now(), r }); if (tokenPairsCache.size > 500) tokenPairsCache.delete(tokenPairsCache.keys().next().value);
+  return r;
+}
 const telegram = require('./telegram-notify');
 const paperCap = require('./paper-capital');
 const paperSettings = require('./paper-settings');
@@ -26,6 +39,7 @@ const jup = require('./jupiter-config');   // optional JUPITER_API_KEY -> api.ju
 const rugSticky = require('./rug-sticky');   // a token flagged rugged/danger/high score stays blocked even if RugCheck later answers clean
 const screenReasons = require('./screen-reasons');
 const tvlDrop = require('./tvl-drop');
+const tokenAge = require('./token-age');   // MIN_TOKEN_AGE_H: age of the token mint (not the pool)
 const entryReasons = require('./entry-reasons');
 const screenSource = require('./pool-screen-source');
 const paperFunding = require('./paper-funding');
@@ -103,6 +117,7 @@ const CFG = {
   MIN_FT: +(process.env.MIN_FT || 1),
   MAX_PUMP1H: +(process.env.MAX_PUMP1H || 0.135),
   MIN_AGE_H: +(process.env.MIN_AGE_H || 24),
+  MIN_TOKEN_AGE_H: +(process.env.MIN_TOKEN_AGE_H || 0),   // 0 = off; overwritten by the shared settings
   MIN_LIQ_USD: +(process.env.MIN_LIQ_USD || 10000),
   MAX_POS_TVL_FRAC: +(process.env.MAX_POS_TVL_FRAC || 0.05),
   MAX_POSITIONS:5,CAPITAL_ASSET:'USDC',MAX_LIQ_USD:100000,MAX_NONREFUND_SOL:.05,REOPEN_COOLDOWN_MIN:30,MAX_PUMP24H_PCT:200,POSITION_USDC:0,UPPER_BUFFER_BINS:0,OOR_RIGHT_CONFIRM_POLLS:2,OOR_RIGHT_MIN_BINS:5,OOR_RIGHT_REPOSITION_MIN_PNL_PCT:-3,RUGCHECK_STICKY_DAYS:7,FEE_TURNOVER_MAX_PCT:60,FEE_TURNOVER_TVL_BELOW_USD:25000,OOR_RIGHT_MIN_PROFIT_PCT:.5,OOR_RIGHT_MAX_REPOSITIONS:2,
@@ -477,6 +492,13 @@ async function performScan(policy,opts={}) {
     {const cooldown=entryPolicy.cooldownReason(recentHistory,p.address,policy.REOPEN_COOLDOWN_MIN);if(cooldown&&skipSoft(p,tag,cooldown))continue;}
     if (ff.tvlDrop) { const ev = tvlDrop.evaluatePool(p, recentEntries, policy.TVL_DROP_MAX_PCT ?? 45); if (!ev.ok && skipSoft(p, tag, ev.why)) continue; }
     if (ff.oldDump && policy.OLD_TOKEN_MODE === 'BLOCK_ALL') { const ot = antirug.evaluateOldToken(Number(p.created_at) > 0 ? ageH : null, policy.OLD_DUMP_MIN_AGE_H ?? 400); if (!ot.ok && skipSoft(p, tag, ot.why)) continue; }
+    if ((+policy.MIN_TOKEN_AGE_H || 0) > 0) {   // token (mint) age, not pool age: an old token with a new pool still counts as old
+      const mintX = p.token_x?.address, ds = await dexTokenPairs(mintX), rep = await fetchRugCheck(mintX);
+      const est = tokenAge.estimate({ mint: mintX, report: rep, pools: [...seen.values()], pairs: ds.pairs });
+      const ta = tokenAge.evaluate(est, policy.MIN_TOKEN_AGE_H);
+      D(p).tokenAge = est;
+      if (!ta.ok && skipSoft(p, tag, ta.why)) continue;
+    }
     {p.entryCostEstimate=await screenEntryCost(p,policy);const why=entryCost.rejection(p.entryCostEstimate,policy.MAX_NONREFUND_SOL??.05);if(why&&skipSoft(p,tag,why))continue;}
     let pvp = null;
     if (pvpMode !== 'OFF') {
@@ -579,7 +601,7 @@ async function performScan(policy,opts={}) {
     r.isOpen=true;r.openInfo=entryReasons.build(pos,{policy,pass:entryPassCache.get(pos.pool+'|'+pos.openedAt)||null,latest:latestOf(p)});return r;};
   const display = [...openPosNow.map(pos=>openRow(pos,seen.get(pos.pool))),...screenSource.sortRows([...displayed.values()].filter(p=>!openSet.has(p.address)).map(toRow))];
   scan.last = { at:now(), atWib:wib(),startedAt:scanStartedAt,requestId:refreshRequest?.id,policy:screenRefresh.policy(policy),policyKey:screenRefresh.signature(policy), fetched:seen.size, basic:c.length, passed:picks.length, rejects:rej,
-    filters:{REOPEN_COOLDOWN_MIN:policy.REOPEN_COOLDOWN_MIN,MAX_PUMP24H_PCT:policy.MAX_PUMP24H_PCT,MAX_LIQ_USD:policy.MAX_LIQ_USD,MAX_NONREFUND_SOL:policy.MAX_NONREFUND_SOL,MIN_FT:policy.MIN_FT,MIN_LIQ_USD:policy.MIN_LIQ_USD,MIN_AGE_H:policy.MIN_AGE_H,MIN_BIN_STEP:policy.MIN_BIN_STEP,MAX_BIN_STEP:policy.MAX_BIN_STEP,FILTERS_ENABLED:filtersOn,PUMP1H_FILTER_ENABLED:fOn('PUMP1H_FILTER_ENABLED'),PUMP24H_FILTER_ENABLED:fOn('PUMP24H_FILTER_ENABLED'),RUGCHECK:!!policy.RUGCHECK,CHECK_TOP_HOLDERS:!!policy.CHECK_TOP_HOLDERS,CHECK_INSIDERS:fOn('CHECK_INSIDERS'),MAX_INSIDER_PCT:policy.MAX_INSIDER_PCT,ANTI_PVP_MODE:pvpMode,ANTI_PVP_MIN_LIQ_USD:policy.ANTI_PVP_MIN_LIQ_USD,TVL_DROP_FILTER_ENABLED:ff.tvlDrop,TVL_DROP_MAX_PCT:policy.TVL_DROP_MAX_PCT},
+    filters:{REOPEN_COOLDOWN_MIN:policy.REOPEN_COOLDOWN_MIN,MAX_PUMP24H_PCT:policy.MAX_PUMP24H_PCT,MAX_LIQ_USD:policy.MAX_LIQ_USD,MAX_NONREFUND_SOL:policy.MAX_NONREFUND_SOL,MIN_FT:policy.MIN_FT,MIN_LIQ_USD:policy.MIN_LIQ_USD,MIN_AGE_H:policy.MIN_AGE_H,MIN_TOKEN_AGE_H:policy.MIN_TOKEN_AGE_H||0,MIN_BIN_STEP:policy.MIN_BIN_STEP,MAX_BIN_STEP:policy.MAX_BIN_STEP,FILTERS_ENABLED:filtersOn,PUMP1H_FILTER_ENABLED:fOn('PUMP1H_FILTER_ENABLED'),PUMP24H_FILTER_ENABLED:fOn('PUMP24H_FILTER_ENABLED'),RUGCHECK:!!policy.RUGCHECK,CHECK_TOP_HOLDERS:!!policy.CHECK_TOP_HOLDERS,CHECK_INSIDERS:fOn('CHECK_INSIDERS'),MAX_INSIDER_PCT:policy.MAX_INSIDER_PCT,ANTI_PVP_MODE:pvpMode,ANTI_PVP_MIN_LIQ_USD:policy.ANTI_PVP_MIN_LIQ_USD,TVL_DROP_FILTER_ENABLED:ff.tvlDrop,TVL_DROP_MAX_PCT:policy.TVL_DROP_MAX_PCT},
     source:universe.source,sourceLabel:universe.sourceLabel,sourceReason:universe.sourceReason,
     hawkfiEndpoint:universe.hawkfiEndpoint,hawkfiVerified:false,coverage:universe.coverage,
     display, near:near.slice(0,8).map(p=>screenSource.row(p,[`fee/tvl${policy.FT_WINDOW}<${policy.MIN_FT}%`])),
@@ -611,7 +633,9 @@ async function performScan(policy,opts={}) {
             if(ds)pvp=antiPvp.evaluate({self:antiPvp.fromPool(p),entries:[...pvpUniverse,...ds.pairs.map(antiPvp.fromDexPair)],mode:ffD.antiPvp,minLiq:policy.ANTI_PVP_MIN_LIQ_USD??10000});}
           let pu=d.pu,pu24=d.pu24,pumpSource=null;
           if((ffD.pump1h&&pu===undefined)||((ffD.pump24h||(ffD.oldDump&&policy.OLD_TOKEN_MODE!=='BLOCK_ALL'&&(nowS-createdAtSec(p))/3600>(policy.OLD_DUMP_MIN_AGE_H??400)))&&pu24===undefined)){const pr=await diagPair(p.address,()=>diagStats.pair<MAX_NEW&&canFetch()&&(diagStats.pair++,true));if(pr){if(pu===undefined)pu=pr.h1;if(pu24===undefined)pu24=pr.h24;pumpSource='DexScreener';}}
-          const list=screenReasons.evaluate(p,{policy,nowS,flags:ffD,sl:mint?slMints[mint]||null:null,cooldown:policy.PAPER?entryPolicy.cooldownReason(recentHistory,p.address,policy.REOPEN_COOLDOWN_MIN):null,
+          let tAge=d.tokenAge;
+          if(tAge===undefined&&mint&&(+policy.MIN_TOKEN_AGE_H||0)>0){const tp=tokenPairsCache.get(mint),rc=rugCache.get(mint);if(tp||rc)tAge=tokenAge.estimate({mint,report:report||rc?.report||null,pools:[...seen.values()],pairs:tp?.r?.pairs||[]});if(tAge&&!tAge.known&&!(tp&&rc))tAge=undefined;}
+          const list=screenReasons.evaluate(p,{policy,nowS,flags:ffD,tokenAge:tAge,sl:mint?slMints[mint]||null:null,cooldown:policy.PAPER?entryPolicy.cooldownReason(recentHistory,p.address,policy.REOPEN_COOLDOWN_MIN):null,
             open:{samePool:openPos.some(x=>x.pool===p.address),caPoolName:(openPos.find(x=>x.mintX===mint&&x.pool!==p.address)||{}).name||null,count:openPos.length,max:policy.MAX_POSITIONS},
             entryCost:p.entryCostEstimate||undefined,pu,pu24,pumpSource,mint:d.mint,report,pvp,rugSticky:mint&&policy.RUGCHECK&&(policy.RUGCHECK_STICKY_DAYS??7)>0?rugSticky.get(PAPER_DIR,mint,policy.RUGCHECK_STICKY_DAYS??7):null,holdersExclude:[p.reserve_x,p.address],
             prevTvl:tvlDrop.entryTvl(tvlDrop.previousEntry(recentEntries.concat(openPos),p))});
@@ -1113,6 +1137,7 @@ function applyPaperSettings({ logAlways = false } = {}) {
   CFG.MIN_FT = values.MIN_FT;
   CFG.MIN_LIQ_USD = values.MIN_LIQ_USD;
   CFG.MIN_AGE_H = values.MIN_AGE_H;
+  CFG.MIN_TOKEN_AGE_H = values.MIN_TOKEN_AGE_H ?? 0;
   for(const k of ['OOR_RIGHT_REPOSITION_MIN_PNL_PCT','FEE_TURNOVER_MAX_PCT','FEE_TURNOVER_TVL_BELOW_USD','RUGCHECK_STICKY_DAYS','OOR_RIGHT_MIN_BINS','NOTIFY_RESHAPE','MAX_POSITIONS','CAPITAL_ASSET','REOPEN_COOLDOWN_MIN','MAX_PUMP24H_PCT','MAX_LIQ_USD','MAX_NONREFUND_SOL','MIN_BIN_STEP','MAX_BIN_STEP','POSITION_USDC','POSITION_SOL_OPEN','UPPER_BUFFER_BINS','OOR_RIGHT_CONFIRM_POLLS','OOR_RIGHT_MIN_PROFIT_PCT','OOR_RIGHT_MAX_REPOSITIONS'])CFG[k]=values[k];
   CFG.TP = values.TP;
   for(const k of ['TP_USD_PCT','OOR_RIGHT_CLOSE','TRAIL_ENABLED','TRAIL_ARM_PCT','TRAIL_DROP_PCT','OOR_MAX_MIN','EMERGENCY_TP_ENABLED','EMERGENCY_TP_TRIGGER_RANGE_PCT','EMERGENCY_TP_PCT','EMERGENCY_SLPLUS_ENABLED','EMERGENCY_SLPLUS_ARM_PCT','EMERGENCY_SLPLUS_LOCK_PCT','EMERGENCY_SLPLUS_CONFIRM_POLLS','EMERGENCY_SLPLUS_FLOOR_PCT','EMERGENCY_SLPLUS_FLOOR_POLLS','SL_BLACKLIST_ENABLED','STALE_CLOSE_ENABLED','STALE_EXIT_MODE','STALE_EXIT_PCT']) CFG[k]=values[k];
@@ -1132,7 +1157,7 @@ function applyPaperSettings({ logAlways = false } = {}) {
   {const ff=antiPvp.filterFlags(values,BASE_TOKEN_CHECKS);CFG.RUGCHECK=ff.rugcheck;CFG.CHECK_TOP_HOLDERS=ff.topHolders;}
   if (VARIANTS[0]) VARIANTS[0].n = values.RESHAPE_N;
   if (changed || logAlways) {
-    log(`paper settings applied: MIN_FT=${values.MIN_FT}% MIN_LIQ_USD=${values.MIN_LIQ_USD} MIN_AGE_H=${values.MIN_AGE_H} BIN_STEP=${values.MIN_BIN_STEP}..${values.MAX_BIN_STEP} POSITION_USDC=${values.POSITION_USDC} UPPER_BUFFER_BINS=${values.UPPER_BUFFER_BINS} rightConfirm=${values.OOR_RIGHT_CONFIRM_POLLS} RESHAPE_N=${values.RESHAPE_N} TP_USDC=${values.TP_USD_PCT}% rightOor=${values.OOR_RIGHT_CLOSE} trailing=${values.TRAIL_ENABLED} emergencyTp=${values.EMERGENCY_TP_ENABLED}(priceDrop>=${values.EMERGENCY_TP_TRIGGER_RANGE_PCT}% of open lower range -> TP ${values.EMERGENCY_TP_PCT}%) leftOorMin=${values.OOR_MAX_MIN} emergency=${values.EMERGENCY_DROP} maxHours=${values.MAX_HOURS} GAS_BUFFER_SOL=${values.GAS_BUFFER_SOL} pump1h=${values.MAX_PUMP1H} pump24h=${values.MAX_PUMP_24H} volSpike=${values.VOL_SPIKE_1H_OF_24H} tokenFilters=${values.FILTERS_ENABLED?'ON':'OFF'}(pump1h=${values.PUMP1H_FILTER_ENABLED} pump24h=${values.PUMP24H_FILTER_ENABLED} rugcheck=${values.RUGCHECK_ENABLED} topHolders=${values.TOP_HOLDERS_ENABLED} insiders=${values.CHECK_INSIDERS}<=${values.MAX_INSIDER_PCT}% antiPvp=${values.ANTI_PVP_MODE}>=$${values.ANTI_PVP_MIN_LIQ_USD})`);
+    log(`paper settings applied: MIN_FT=${values.MIN_FT}% MIN_LIQ_USD=${values.MIN_LIQ_USD} MIN_AGE_H=${values.MIN_AGE_H} MIN_TOKEN_AGE_H=${values.MIN_TOKEN_AGE_H ?? 0} BIN_STEP=${values.MIN_BIN_STEP}..${values.MAX_BIN_STEP} POSITION_USDC=${values.POSITION_USDC} UPPER_BUFFER_BINS=${values.UPPER_BUFFER_BINS} rightConfirm=${values.OOR_RIGHT_CONFIRM_POLLS} RESHAPE_N=${values.RESHAPE_N} TP_USDC=${values.TP_USD_PCT}% rightOor=${values.OOR_RIGHT_CLOSE} trailing=${values.TRAIL_ENABLED} emergencyTp=${values.EMERGENCY_TP_ENABLED}(priceDrop>=${values.EMERGENCY_TP_TRIGGER_RANGE_PCT}% of open lower range -> TP ${values.EMERGENCY_TP_PCT}%) leftOorMin=${values.OOR_MAX_MIN} emergency=${values.EMERGENCY_DROP} maxHours=${values.MAX_HOURS} GAS_BUFFER_SOL=${values.GAS_BUFFER_SOL} pump1h=${values.MAX_PUMP1H} pump24h=${values.MAX_PUMP_24H} volSpike=${values.VOL_SPIKE_1H_OF_24H} tokenFilters=${values.FILTERS_ENABLED?'ON':'OFF'}(pump1h=${values.PUMP1H_FILTER_ENABLED} pump24h=${values.PUMP24H_FILTER_ENABLED} rugcheck=${values.RUGCHECK_ENABLED} topHolders=${values.TOP_HOLDERS_ENABLED} insiders=${values.CHECK_INSIDERS}<=${values.MAX_INSIDER_PCT}% antiPvp=${values.ANTI_PVP_MODE}>=$${values.ANTI_PVP_MIN_LIQ_USD})`);
     lastAppliedSettingsKey = key;
   }
   return values;
